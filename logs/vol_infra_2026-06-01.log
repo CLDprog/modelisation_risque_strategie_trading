@@ -1,0 +1,50 @@
+2026-06-01 12:21:08.773 | INFO     | __main__:main:31 - === BOOTSTRAP SMOKE TEST ===
+2026-06-01 12:21:08.794 | INFO     | __main__:main:41 - Connecting to IBKR at 127.0.0.1:7497 (clientId=1)
+2026-06-01 12:21:08.794 | ERROR    | src.connectivity.session:connect:77 - ib_insync is not installed.
+2026-06-01 12:21:08.794 | ERROR    | __main__:main:50 - Session is not healthy after connect. Check TWS/Gateway.
+2026-06-01 12:21:08.795 | INFO     | src.connectivity.session:disconnect:103 - IBKR session disconnected.
+2026-06-01 12:22:10.003 | INFO     | __main__:main:31 - === BOOTSTRAP SMOKE TEST ===
+2026-06-01 12:22:10.005 | INFO     | __main__:main:41 - Connecting to IBKR at 127.0.0.1:7497 (clientId=1)
+2026-06-01 12:22:10.006 | INFO     | src.connectivity.session:_set_state:148 - Session state: DISCONNECTED → CONNECTING
+2026-06-01 12:22:10.006 | INFO     | src.connectivity.session:connect:84 - Connecting to IBKR 127.0.0.1:7497 (attempt 1)
+2026-06-01 12:22:20.120 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTING → CONNECTED
+2026-06-01 12:22:20.120 | INFO     | src.connectivity.session:_on_connected:142 - IBKR session CONNECTED (client_id=1)
+2026-06-01 12:22:20.120 | INFO     | __main__:main:56 - Session state: CONNECTED
+2026-06-01 12:22:20.120 | INFO     | __main__:main:57 - Connected at: 2026-06-01 10:22:20.120544+00:00
+2026-06-01 12:22:20.456 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTED → DISCONNECTED
+2026-06-01 12:22:20.458 | INFO     | src.connectivity.session:disconnect:103 - IBKR session disconnected.
+2026-06-01 12:22:32.812 | INFO     | __main__:main:31 - === BOOTSTRAP SMOKE TEST ===
+2026-06-01 12:22:32.818 | INFO     | __main__:main:41 - Connecting to IBKR at 127.0.0.1:7497 (clientId=1)
+2026-06-01 12:22:32.818 | INFO     | src.connectivity.session:_set_state:148 - Session state: DISCONNECTED → CONNECTING
+2026-06-01 12:22:32.818 | INFO     | src.connectivity.session:connect:84 - Connecting to IBKR 127.0.0.1:7497 (attempt 1)
+2026-06-01 12:22:42.831 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTING → CONNECTED
+2026-06-01 12:22:42.831 | INFO     | src.connectivity.session:_on_connected:142 - IBKR session CONNECTED (client_id=1)
+2026-06-01 12:22:42.831 | INFO     | __main__:main:56 - Session state: CONNECTED
+2026-06-01 12:22:42.831 | INFO     | __main__:main:57 - Connected at: 2026-06-01 10:22:42.831203+00:00
+2026-06-01 12:22:42.937 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTED → DISCONNECTED
+2026-06-01 12:22:42.937 | INFO     | src.connectivity.session:disconnect:103 - IBKR session disconnected.
+2026-06-01 12:32:28.223 | INFO     | __main__:main:31 - === BOOTSTRAP SMOKE TEST ===
+2026-06-01 12:32:28.227 | INFO     | __main__:main:41 - Connecting to IBKR at 127.0.0.1:7497 (clientId=1)
+2026-06-01 12:32:28.227 | INFO     | src.connectivity.session:_set_state:148 - Session state: DISCONNECTED → CONNECTING
+2026-06-01 12:32:28.229 | INFO     | src.connectivity.session:connect:84 - Connecting to IBKR 127.0.0.1:7497 (attempt 1)
+2026-06-01 12:32:28.610 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTING → CONNECTED
+2026-06-01 12:32:28.610 | INFO     | src.connectivity.session:_on_connected:142 - IBKR session CONNECTED (client_id=1)
+2026-06-01 12:32:28.610 | INFO     | __main__:main:56 - Session state: CONNECTED
+2026-06-01 12:32:28.611 | INFO     | __main__:main:57 - Connected at: 2026-06-01 10:32:28.610268+00:00
+2026-06-01 12:32:28.731 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTED → DISCONNECTED
+2026-06-01 12:32:28.731 | INFO     | src.connectivity.session:disconnect:103 - IBKR session disconnected.
+2026-06-01 12:33:01.163 | INFO     | __main__:main:31 - === BOOTSTRAP SMOKE TEST ===
+2026-06-01 12:33:01.166 | INFO     | __main__:main:41 - Connecting to IBKR at 127.0.0.1:7497 (clientId=1)
+2026-06-01 12:33:01.166 | INFO     | src.connectivity.session:_set_state:148 - Session state: DISCONNECTED → CONNECTING
+2026-06-01 12:33:01.166 | INFO     | src.connectivity.session:connect:84 - Connecting to IBKR 127.0.0.1:7497 (attempt 1)
+2026-06-01 12:33:01.380 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTING → CONNECTED
+2026-06-01 12:33:01.383 | INFO     | src.connectivity.session:_on_connected:142 - IBKR session CONNECTED (client_id=1)
+2026-06-01 12:33:01.383 | INFO     | __main__:main:56 - Session state: CONNECTED
+2026-06-01 12:33:01.384 | INFO     | __main__:main:57 - Connected at: 2026-06-01 10:33:01.380316+00:00
+2026-06-01 12:33:01.496 | INFO     | __main__:main:67 - SPY resolved: conId=756733, exchange=ARCA
+2026-06-01 12:33:03.497 | INFO     | __main__:main:72 - SPY quote: bid=nan, ask=nan, last=nan
+2026-06-01 12:33:03.554 | INFO     | __main__:main:85 - Written 1 event to raw store: {'session_date': '2026-06-01', 'events_written': 1, 'malformed_events': 0, 'buffer_pending': 0}
+2026-06-01 12:33:03.556 | INFO     | __main__:main:89 - Heartbeat: OK
+2026-06-01 12:33:03.556 | INFO     | __main__:main:91 - === BOOTSTRAP COMPLETE — all checks passed ===
+2026-06-01 12:33:03.556 | INFO     | src.connectivity.session:_set_state:148 - Session state: CONNECTED → DISCONNECTED
+2026-06-01 12:33:03.557 | INFO     | src.connectivity.session:disconnect:103 - IBKR session disconnected.

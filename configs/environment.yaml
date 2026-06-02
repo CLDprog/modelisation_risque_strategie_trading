@@ -1,0 +1,18 @@
+environment: development
+
+paths:
+  data_dir: ./data
+  raw_dir: ./data/raw
+  analytics_dir: ./data/analytics
+  qc_dir: ./data/qc
+  log_dir: ./logs
+
+storage:
+  metadata_db: ./data/metadata.db   # SQLite pour instrument master, jobs, QC
+  raw_format: parquet
+  analytics_format: parquet
+
+logging:
+  level: INFO
+  rotation: "10 MB"
+  retention: "30 days"

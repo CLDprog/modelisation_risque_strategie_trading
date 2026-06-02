@@ -1,0 +1,29 @@
+quote_filters:
+  max_spread_pct: 0.25          # rejeter si (ask-bid)/mid > 25%
+  max_quote_age_seconds: 60     # rejeter les quotes de plus de 60s
+  min_open_interest: 10         # ignorer les strikes sans intérêt ouvert
+  require_positive_bid: true    # rejeter si bid <= 0
+
+forward_engine:
+  strike_band_mode: nearest_liquid
+  max_candidate_count: 12
+  outlier_method: mad            # median absolute deviation
+  max_robust_zscore: 3.5
+  min_candidate_count: 3
+
+iv_solver:
+  lower_vol: 0.0001
+  upper_vol: 5.0000
+  price_tolerance: 1.0e-6
+  max_iterations: 100
+
+surface:
+  model: svi                    # Stochastic Volatility Inspired
+  fallback_model: spline
+  min_points_per_slice: 5
+  max_rmse: 0.02
+  calendar_monotonicity_check: true
+
+collector:
+  max_gap_seconds: 30           # alerte si pas de data pendant > 30s
+  min_coverage_ratio: 0.85

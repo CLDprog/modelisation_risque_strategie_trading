@@ -1,0 +1,25 @@
+underlyings:
+  - symbol: SPY
+    exchange: SMART
+    currency: USD
+    sec_type: STK
+    description: "SPDR S&P 500 ETF"
+
+  - symbol: QQQ
+    exchange: SMART
+    currency: USD
+    sec_type: STK
+    description: "Invesco QQQ ETF"
+
+  - symbol: AAPL
+    exchange: SMART
+    currency: USD
+    sec_type: STK
+    description: "Apple Inc."
+
+options:
+  exchange: SMART
+  currency: USD
+  maturity_window_days: 180    # maturités jusqu'à 180 jours
+  min_days_to_expiry: 7        # ignorer les options expirant dans moins de 7 jours
+  max_strikes_per_side: 15     # max 15 strikes OTM de chaque côté

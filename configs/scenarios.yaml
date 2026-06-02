@@ -1,0 +1,44 @@
+version: "v1.0"
+
+scenarios:
+  - scenario_id: spot_dn_20pct
+    spot_shift_pct: -0.20
+    vol_shift_abs: 0.10
+    time_roll_days: 0
+    description: "Crash: spot -20%, vol +10pts"
+
+  - scenario_id: spot_dn_10pct
+    spot_shift_pct: -0.10
+    vol_shift_abs: 0.05
+    time_roll_days: 0
+    description: "Correction: spot -10%, vol +5pts"
+
+  - scenario_id: spot_up_10pct
+    spot_shift_pct: 0.10
+    vol_shift_abs: -0.03
+    time_roll_days: 0
+    description: "Rally: spot +10%, vol -3pts"
+
+  - scenario_id: vol_spike
+    spot_shift_pct: 0.0
+    vol_shift_abs: 0.15
+    time_roll_days: 0
+    description: "Vol spike: +15pts sans mouvement de spot"
+
+  - scenario_id: vol_crush
+    spot_shift_pct: 0.0
+    vol_shift_abs: -0.10
+    time_roll_days: 0
+    description: "Vol crush: -10pts"
+
+  - scenario_id: theta_1day
+    spot_shift_pct: 0.0
+    vol_shift_abs: 0.0
+    time_roll_days: 1
+    description: "Passage du temps: +1 jour calendaire"
+
+  - scenario_id: theta_5days
+    spot_shift_pct: 0.0
+    vol_shift_abs: 0.0
+    time_roll_days: 5
+    description: "Passage du temps: +5 jours"

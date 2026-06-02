@@ -1,0 +1,20 @@
+day_count:
+  convention: actual_365         # ACT/365 pour convertir dates en année fraction
+  trading_days_per_year: 252
+
+pricer:
+  european: black_scholes
+  american: binomial_tree
+
+binomial_tree:
+  steps: 200                    # nombre de pas pour le pricing américain
+
+finite_difference:
+  delta_bump_pct: 0.01          # +1% sur spot pour finite-diff delta
+  gamma_bump_pct: 0.01
+  vega_bump_abs: 0.01           # +1 vol point pour finite-diff vega
+  theta_bump_days: 1
+
+risk_free_rate:
+  source: constant              # simplification pour le projet école
+  value: 0.053                  # ~5.3% (taux Fed funds approximatif)
