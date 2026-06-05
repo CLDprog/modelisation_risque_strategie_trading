@@ -38,13 +38,25 @@ class ParquetStore:
         return p
 
     def write(self, table: str, df: pd.DataFrame, dt: date,
-              filename: str = "data.parquet") -> Path:
-        """Write (or overwrite) a partition."""
+              filename: str = "data.parquet", atomic: bool = False) -> Path:
+        """
+        Write (or overwrite) a partition.
+
+        atomic=True : écrit dans un fichier temporaire puis le renomme (os.replace,
+        atomique sur le même FS). Indispensable quand un lecteur (le front Dash) peut
+        lire le fichier pendant que le collecteur l'écrit.
+        """
         if df.empty:
             logger.warning(f"Attempted to write empty DataFrame to {table}/{dt}")
             return None
         path = self._partition_path(table, dt) / filename
-        df.to_parquet(path, index=False, engine="pyarrow")
+        if atomic:
+            import os
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            df.to_parquet(tmp, index=False, engine="pyarrow")
+            os.replace(tmp, path)
+        else:
+            df.to_parquet(path, index=False, engine="pyarrow")
         logger.debug(f"Wrote {len(df)} rows → {path}")
         return path
 

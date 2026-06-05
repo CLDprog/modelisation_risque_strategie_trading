@@ -150,6 +150,84 @@ def solve_iv(market_price: float, forward: float, strike: float,
 
 
 # ---------------------------------------------------------------------------
+# American IV inversion (Step 8 — options à exercice anticipé)
+# ---------------------------------------------------------------------------
+
+def solve_iv_american(market_price: float, spot: float, strike: float,
+                      maturity: float, rate: float, carry: float, right: str,
+                      contract_key: str = "", snapshot_ts: str = "",
+                      lower_vol: float = 1e-4, upper_vol: float = 5.0,
+                      price_tol: float = 1e-5, max_iter: int = 60,
+                      steps: int = 80) -> IvSolveResult:
+    """
+    Inverse le prix d'une option AMÉRICAINE en volatilité implicite.
+
+    Même squelette bracketé (Brent) que le cas européen, mais la fonction de prix
+    est l'arbre binomial CRR (price_american_binomial). On utilise un arbre plus
+    léger (steps=80) car le solveur appelle le pricer de nombreuses fois.
+
+    Convention documentée : l'IV américaine est la vol qui égalise le prix CRR au
+    prix de marché, sous l'hypothèse de carry continu fourni.
+    """
+    from src.pricing.american import price_american_binomial
+
+    if maturity <= 0:
+        return IvSolveResult(
+            contract_key=contract_key, snapshot_ts=snapshot_ts,
+            market_price=market_price, implied_vol=None, converged=False,
+            iterations=0, residual=float("inf"), lower_bound=lower_vol,
+            upper_bound=upper_vol, failure_reason="zero_or_negative_maturity",
+            model_name="american_crr", model_version="v1")
+
+    # Borne basse : valeur intrinsèque actualisée. Si le prix est sous l'intrinsèque
+    # immédiat, pas de solution.
+    r_char = right.upper()[0]
+    intrinsic = max(spot - strike, 0.0) if r_char == "C" else max(strike - spot, 0.0)
+    if market_price < intrinsic - 1e-6 or market_price <= 0:
+        return IvSolveResult(
+            contract_key=contract_key, snapshot_ts=snapshot_ts,
+            market_price=market_price, implied_vol=None, converged=False,
+            iterations=0, residual=float("inf"), lower_bound=lower_vol,
+            upper_bound=upper_vol, failure_reason="below_intrinsic_or_non_positive",
+            model_name="american_crr", model_version="v1")
+
+    def objective(sigma: float) -> float:
+        return price_american_binomial(spot, strike, sigma, maturity, rate,
+                                       carry, right, steps).price - market_price
+
+    try:
+        f_lo, f_hi = objective(lower_vol), objective(upper_vol)
+        if f_lo * f_hi > 0:
+            return IvSolveResult(
+                contract_key=contract_key, snapshot_ts=snapshot_ts,
+                market_price=market_price, implied_vol=None, converged=False,
+                iterations=0, residual=min(abs(f_lo), abs(f_hi)),
+                lower_bound=lower_vol, upper_bound=upper_vol,
+                failure_reason="bracket_does_not_straddle_zero",
+                model_name="american_crr", model_version="v1")
+
+        result_obj = brentq(objective, lower_vol, upper_vol,
+                            xtol=price_tol, maxiter=max_iter, full_output=True)
+        solved = result_obj[0]
+        residual = abs(objective(solved))
+        converged = residual < price_tol * 100
+        return IvSolveResult(
+            contract_key=contract_key, snapshot_ts=snapshot_ts,
+            market_price=market_price, implied_vol=solved, converged=converged,
+            iterations=result_obj[1].iterations, residual=residual,
+            lower_bound=lower_vol, upper_bound=upper_vol,
+            failure_reason=None if converged else "residual_above_tolerance",
+            model_name="american_crr", model_version="v1")
+    except Exception as exc:
+        return IvSolveResult(
+            contract_key=contract_key, snapshot_ts=snapshot_ts,
+            market_price=market_price, implied_vol=None, converged=False,
+            iterations=0, residual=float("inf"), lower_bound=lower_vol,
+            upper_bound=upper_vol, failure_reason=f"solver_exception:{str(exc)[:80]}",
+            model_name="american_crr", model_version="v1")
+
+
+# ---------------------------------------------------------------------------
 # Batch solver
 # ---------------------------------------------------------------------------
 
@@ -206,6 +284,7 @@ def solve_chain_iv(snapshot_df, forward_results: dict, rate: float,
 
         results.append({
             "contract_key": result.contract_key,
+            "instrument_key": result.contract_key,   # alias : schéma harmonisé live/replay
             "snapshot_ts": result.snapshot_ts,
             "underlying_symbol": row["underlying_symbol"],
             "expiry": expiry,

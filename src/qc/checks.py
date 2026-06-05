@@ -164,7 +164,25 @@ def check_surface_fit(surface_result, underlying_symbol: str,
                     "high_rmse_or_failed_slices" if status != "pass" else "ok",
                     {"max_rmse": max_rmse_obs, "n_slices": len(surface_result.slices),
                      "n_failed": n_failed,
-                     "calendar_ok": surface_result.calendar_ok})
+                     "calendar_ok": surface_result.calendar_ok,
+                     "butterfly_ok": getattr(surface_result, "butterfly_ok", True),
+                     "n_butterfly_violations": getattr(surface_result, "n_butterfly_violations", 0)})
+
+
+def check_calendar_arbitrage(surface_result, underlying_symbol: str) -> QcResult:
+    """Check no-arbitrage : monotonie calendaire ET convexité papillon."""
+    cal_ok = getattr(surface_result, "calendar_ok", True)
+    bf_ok  = getattr(surface_result, "butterfly_ok", True)
+    n_viol = getattr(surface_result, "n_butterfly_violations", 0)
+    ok = cal_ok and bf_ok
+    status = "pass" if ok else "warn"
+    reason = "ok" if ok else (
+        "calendar_violation" if not cal_ok else f"butterfly_{n_viol}_violations")
+    return QcResult("no_arbitrage", underlying_symbol, status,
+                    "info" if ok else "warning",
+                    float(n_viol), 0.0, reason,
+                    {"calendar_ok": cal_ok, "butterfly_ok": bf_ok,
+                     "n_butterfly_violations": n_viol})
 
 
 def check_scenario_completeness(scenario_reports: list,

@@ -64,6 +64,29 @@ class OptionContract:
     def __str__(self) -> str:
         return self.instrument_key
 
+    @classmethod
+    def from_key(cls, key: str) -> Optional["OptionContract"]:
+        """
+        Reconstruit un OptionContract depuis sa clé canonique.
+        Format : SYMBOL|OPT|YYYYMMDD|STRIKE|R|EXCH|CCY
+        Permet de reconstituer l'univers depuis la couche brute (replay).
+        """
+        from datetime import datetime as _dt
+        parts = key.split("|")
+        if len(parts) != 7 or parts[1] != "OPT":
+            return None
+        try:
+            return cls(
+                underlying_symbol=parts[0],
+                expiry=_dt.strptime(parts[2], "%Y%m%d").date(),
+                strike=float(parts[3]),
+                right=parts[4],
+                exchange=parts[5],
+                currency=parts[6],
+            )
+        except Exception:
+            return None
+
 
 # ---------------------------------------------------------------------------
 # Universe store — in-memory with SQLite persistence

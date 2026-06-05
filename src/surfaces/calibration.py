@@ -19,6 +19,8 @@ from scipy.optimize import minimize
 from scipy.interpolate import UnivariateSpline
 from loguru import logger
 
+from src.pricing.european import bs_call
+
 
 # ---------------------------------------------------------------------------
 # SVI model  (Eq 20)
@@ -69,6 +71,8 @@ class SurfaceFitResult:
     snapshot_ts: str
     slices: List[SliceFitResult] = field(default_factory=list)
     calendar_ok: bool = True
+    butterfly_ok: bool = True            # no-arbitrage papillon (convexité strike)
+    n_butterfly_violations: int = 0
     model_version: str = "svi_v1"
 
 
@@ -158,6 +162,29 @@ def _spline_fallback(k: np.ndarray, w: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# Butterfly no-arbitrage : convexité des prix de calls en strike
+# ---------------------------------------------------------------------------
+
+def check_butterfly_arbitrage(k_grid: np.ndarray, iv_grid: np.ndarray,
+                              maturity: float, tol: float = 1e-6) -> tuple[bool, int]:
+    """
+    Vérifie l'absence d'arbitrage papillon sur une tranche : les prix de calls
+    (mesure forward, non actualisés) doivent être CONVEXES en strike.
+    Condition : C(K_{i-1}) - 2·C(K_i) + C(K_{i+1}) >= 0.
+    Retourne (ok, nombre_de_violations).
+    """
+    if k_grid is None or iv_grid is None or len(k_grid) < 3:
+        return True, 0
+    F = 1.0
+    K = F * np.exp(k_grid)
+    C = np.array([bs_call(F, float(K[i]), float(iv_grid[i]), maturity, 0.0)
+                  for i in range(len(k_grid))])
+    second_diff = C[2:] - 2.0 * C[1:-1] + C[:-2]
+    n_viol = int(np.sum(second_diff < -tol))
+    return n_viol == 0, n_viol
+
+
+# ---------------------------------------------------------------------------
 # Calendar monotonicity  (Eq 21)
 # ---------------------------------------------------------------------------
 
@@ -201,6 +228,14 @@ def fit_surface(iv_points_df: pd.DataFrame, underlying: str,
 
     result = SurfaceFitResult(underlying=underlying, snapshot_ts=snapshot_ts)
 
+    # Garde : un DataFrame vide (aucune IV résolue) n'a pas de colonnes → on sort
+    # proprement avec une surface vide au lieu de lever KeyError.
+    required = {"converged", "underlying_symbol", "expiry",
+                "maturity_years", "log_moneyness", "total_variance"}
+    if iv_points_df is None or iv_points_df.empty or not required.issubset(iv_points_df.columns):
+        logger.warning(f"{underlying}: pas de points IV exploitables pour la surface")
+        return result
+
     # Only use converged IVs
     df = iv_points_df[
         (iv_points_df["converged"] == True) &
@@ -235,6 +270,17 @@ def fit_surface(iv_points_df: pd.DataFrame, underlying: str,
     result.calendar_ok = check_calendar_monotonicity(result.slices)
     if not result.calendar_ok:
         logger.warning(f"{underlying}: calendar monotonicity FAILED")
+
+    # No-arbitrage papillon : convexité par tranche
+    total_viol = 0
+    for s in result.slices:
+        if s.model != "failed" and s.k_grid is not None and s.sigma_grid is not None:
+            ok, n = check_butterfly_arbitrage(s.k_grid, s.sigma_grid, s.maturity_years)
+            total_viol += n
+    result.n_butterfly_violations = total_viol
+    result.butterfly_ok = (total_viol == 0)
+    if not result.butterfly_ok:
+        logger.warning(f"{underlying}: butterfly arbitrage — {total_viol} violations")
 
     return result
 

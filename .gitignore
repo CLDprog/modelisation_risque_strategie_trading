@@ -1,0 +1,22 @@
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code and editor backups
+.vscode/
+*.swp
+*.tmp
+*.log
+
+# Data files and runtime artifacts
+data/alerts.json
+data/collector_status.json
+data/metadata.db
+data/analytics/
+data/raw/qc_history/
+data/raw/raw_market_events/dt=2026-06-05/
+
+env/
+venv/
+.python-version

@@ -75,6 +75,9 @@ class ScenarioReport:
     total_pnl_full: float
     total_pnl_approx: float
     worst_contributors: List[dict]
+    spot_shift_pct: float = 0.0
+    vol_shift_abs: float = 0.0
+    time_roll_days: int = 0
     line_results: List[ScenarioLineResult] = field(default_factory=list)
 
 
@@ -178,6 +181,9 @@ def run_scenario(positions: List[Position], iv_rows_by_key: dict,
         total_pnl_full=total_full,
         total_pnl_approx=total_approx,
         worst_contributors=worst,
+        spot_shift_pct=scenario.spot_shift_pct,
+        vol_shift_abs=scenario.vol_shift_abs,
+        time_roll_days=scenario.time_roll_days,
         line_results=line_results,
     )
 
@@ -204,9 +210,13 @@ def scenario_reports_to_dataframe(reports: List[ScenarioReport]) -> pd.DataFrame
                 "underlying_symbol": line.underlying_symbol,
                 "scenario_pnl_full": line.scenario_pnl_full,
                 "scenario_pnl_approx": line.scenario_pnl_approx,
+                "scenario_pnl": line.scenario_pnl_full,   # alias attendu par le front
                 "base_price": line.base_price,
                 "scenario_price": line.scenario_price,
                 "total_pnl_full": report.total_pnl_full,
                 "description": report.description,
+                "spot_shift_pct": report.spot_shift_pct,
+                "vol_shift_abs": report.vol_shift_abs,
+                "time_roll_days": report.time_roll_days,
             })
     return pd.DataFrame(rows)

@@ -63,9 +63,19 @@ def parity_forward(strike: float, call_mid: float, put_mid: float,
 def liquidity_weight(call_mid: float, put_mid: float,
                      call_bid: float, put_bid: float,
                      call_ask: float, put_ask: float) -> float:
-    """Weight inversely proportional to combined spread."""
-    call_spread = (call_ask - call_bid) if call_ask > call_bid else float("inf")
-    put_spread = (put_ask - put_bid) if put_ask > put_bid else float("inf")
+    """
+    Weight inversely proportional to combined spread.
+    Robuste aux bid/ask manquants (None) : une quote sans bid/ask (prix en
+    last/close uniquement) reçoit un spread inconnu → poids 0 (mais le candidat
+    reste compté ; la moyenne retombera sur la médiane si tous les poids sont nuls).
+    """
+    def _spread(ask, bid):
+        if ask is None or bid is None:
+            return float("inf")
+        return (ask - bid) if ask > bid else float("inf")
+
+    call_spread = _spread(call_ask, call_bid)
+    put_spread  = _spread(put_ask, put_bid)
     combined_spread = call_spread + put_spread
     if combined_spread == 0 or combined_spread == float("inf"):
         return 0.0

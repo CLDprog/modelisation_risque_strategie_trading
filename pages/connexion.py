@@ -1,249 +1,179 @@
-"""Page 1 — Connexion IBKR avec callbacks fonctionnels."""
+"""Page 1 — Monitoring du collecteur (roadmap : runbook start-of-day)."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import dash
-from dash import html, dcc, callback, Input, Output, State
-import dash_bootstrap_components as dbc
 from datetime import datetime, timezone
+
+import dash
+from dash import html, dcc, dash_table, callback, Input, Output
+import dash_bootstrap_components as dbc
 
 from src.data.source import datasource
 
-dash.register_page(__name__, path="/", name="Connexion IBKR")
+dash.register_page(__name__, path="/", name="Collecteur")
 
 
-# ── Helpers UI ────────────────────────────────────────────────────────────────
-
-def _info_row(label: str, value: str):
-    return html.Div([
-        html.Span(label + " : ", className="text-muted me-2 small"),
-        html.Span(value, className="text-light small"),
-    ], className="mb-1")
-
-
-def _metric_box(value: str, label: str, css: str = ""):
+def _metric_box(value, label, css=""):
     return html.Div([
         html.Div(value, className="metric-value"),
         html.Div(label, className="metric-label"),
     ], className=f"metric-box {css}")
 
 
-def _status_panel():
-    """Panneau statut initial (déconnecté)."""
-    return [
-        html.Div([
-            html.Span("● ", className="status-disconnected"),
-            html.Span("DÉCONNECTÉ", className="status-disconnected"),
-        ], className="mb-3 fs-5"),
-        _info_row("Heartbeat",    "—"),
-        _info_row("Reconnexions", "0"),
-        _info_row("Connecté à",   "—"),
-        _info_row("Mode données", "Simulées (mock)"),
-    ]
+def _info_row(label, value):
+    return html.Div([
+        html.Span(label + " : ", className="text-muted me-2 small"),
+        html.Span(value, className="text-light small"),
+    ], className="mb-1")
 
 
-# ── Layout ────────────────────────────────────────────────────────────────────
+def _age_str(iso_ts):
+    if not iso_ts:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso_ts)
+        age = (datetime.now(timezone.utc) - dt).total_seconds()
+        if age < 60:
+            return f"il y a {age:.0f}s"
+        if age < 3600:
+            return f"il y a {age/60:.0f} min"
+        return f"il y a {age/3600:.1f} h"
+    except Exception:
+        return iso_ts
+
 
 layout = dbc.Container([
     html.Div([
-        html.H2("Connexion IBKR"),
-        html.P("Connexion à TWS ou IB Gateway via l'API Socket. Données différées 15 min (paper trading)."),
+        html.H2("Collecteur de données"),
+        html.P("Le collecteur (process séparé) possède la connexion IBKR et alimente le store. "
+               "Le dashboard lit uniquement ce store — il ne se connecte jamais directement à IBKR."),
     ], className="page-header"),
 
-    # Interval pour rafraîchir le statut toutes les 5s
-    dcc.Interval(id="interval-status", interval=5000, n_intervals=0),
-
-    # Alerte retour d'action (connect/disconnect)
-    html.Div(id="conn-alert"),
+    dcc.Interval(id="col-interval", interval=5000, n_intervals=0),
 
     dbc.Row([
-        # Paramètres
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader("Paramètres de connexion"),
-                dbc.CardBody([
-                    dbc.Row([
-                        dbc.Col([
-                            html.Label("Host", className="text-muted small"),
-                            dbc.Input(id="input-host", value="127.0.0.1",
-                                      type="text", className="dash-input mb-3"),
-                        ], width=5),
-                        dbc.Col([
-                            html.Label("Port", className="text-muted small"),
-                            dbc.Input(id="input-port", value="7497",
-                                      type="number", className="dash-input mb-3"),
-                            html.Small("7497 = Paper TWS · 4002 = Paper Gateway",
-                                       className="text-muted"),
-                        ], width=4),
-                        dbc.Col([
-                            html.Label("Client ID", className="text-muted small"),
-                            dbc.Input(id="input-client-id", value="1",
-                                      type="number", className="dash-input mb-3"),
-                        ], width=3),
-                    ]),
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Button("Connecter",    id="btn-connect",
-                                       color="success", className="me-2"),
-                            dbc.Button("Déconnecter",  id="btn-disconnect",
-                                       color="danger",  outline=True),
-                        ])
-                    ]),
-                ]),
-            ], className="card mb-4"),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("État du collecteur"),
+            dbc.CardBody(html.Div(id="col-status")),
+        ], className="card mb-4"), width=6),
 
-            # Configuration requise
-            dbc.Card([
-                dbc.CardHeader("Configuration requise dans TWS"),
-                dbc.CardBody([
-                    dbc.ListGroup([
-                        dbc.ListGroupItem(
-                            "Edit → Global Configuration → API → Settings",
-                            className="bg-transparent border-secondary text-light"),
-                        dbc.ListGroupItem(
-                            "Cocher : Enable ActiveX and Socket Clients",
-                            className="bg-transparent border-secondary text-light"),
-                        dbc.ListGroupItem(
-                            "Décocher : Read-Only API",
-                            className="bg-transparent border-secondary text-light"),
-                        dbc.ListGroupItem(
-                            "Socket port : 7497 · Localhost only : coché",
-                            className="bg-transparent border-secondary text-light"),
-                    ], flush=True),
-                    dbc.Alert(
-                        "TWS doit être ouvert et connecté avant de cliquer Connecter.",
-                        color="warning", className="mt-3 mb-0",
-                    ),
-                ]),
-            ], className="card"),
-        ], width=7),
-
-        # Statut live
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader("Statut de session"),
-                dbc.CardBody(html.Div(id="session-status",
-                                      children=_status_panel())),
-            ], className="card mb-4"),
-
-            dbc.Card([
-                dbc.CardHeader("Source de données active"),
-                dbc.CardBody(html.Div(id="data-source-badge", children=[
-                    dbc.Badge("MOCK — données simulées", color="warning",
-                              className="fs-6 p-2"),
-                    html.P("Spot SPY fictif · Chaîne d'options calculée",
-                           className="text-muted small mt-2 mb-0"),
-                ])),
-            ], className="card"),
-        ], width=5),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Source de données active"),
+            dbc.CardBody(html.Div(id="col-source-badge")),
+        ], className="card mb-4"), width=6),
     ]),
 
-    # Métriques
     dbc.Row([
-        dbc.Col(html.Div(id="metric-state",     children=_metric_box("DÉCONNECTÉ", "État")),       width=3),
-        dbc.Col(html.Div(id="metric-heartbeat", children=_metric_box("—",           "Heartbeat")), width=3),
-        dbc.Col(html.Div(id="metric-spot",      children=_metric_box("—",           "Spot SPY")),  width=3),
-        dbc.Col(html.Div(id="metric-mode",      children=_metric_box("Mock",        "Mode")),      width=3),
-    ], className="mt-4 g-3"),
+        dbc.Col(html.Div(id="col-metric-state"),  width=3),
+        dbc.Col(html.Div(id="col-metric-cycles"), width=3),
+        dbc.Col(html.Div(id="col-metric-last"),   width=3),
+        dbc.Col(html.Div(id="col-metric-syms"),   width=3),
+    ], className="g-3 mb-4"),
 
+    dbc.Card([
+        dbc.CardHeader("Couverture par sous-jacent"),
+        dbc.CardBody(dash_table.DataTable(
+            id="col-symbols-table",
+            columns=[
+                {"name": "Symbole",        "id": "symbol"},
+                {"name": "Spot",           "id": "spot"},
+                {"name": "Quotes options", "id": "n_quotes"},
+                {"name": "Dernière MAJ",   "id": "updated"},
+                {"name": "État",           "id": "state"},
+            ],
+            style_table={"overflowX": "auto"},
+            style_cell={"textAlign": "center", "padding": "8px"},
+        )),
+    ], className="card mb-4"),
+
+    dbc.Card([
+        dbc.CardHeader("Démarrer le collecteur"),
+        dbc.CardBody([
+            html.P("Dans un terminal séparé, à la racine du projet :", className="text-muted small mb-2"),
+            dcc.Markdown("```bash\npython run_collector.py\n```"),
+            html.P("Options : --port 4002 (IB Gateway) · --interval 60 (cycle en secondes)",
+                   className="text-muted small mb-3"),
+            dbc.Alert(
+                "TWS ou IB Gateway doit être ouvert et connecté (port 7497 paper). "
+                "Le collecteur reconnecte automatiquement si la session tombe.",
+                color="dark", className="mb-0 border border-secondary",
+            ),
+        ]),
+    ], className="card"),
 ], fluid=True)
 
 
-# ── Callbacks ─────────────────────────────────────────────────────────────────
-
 @callback(
-    Output("conn-alert",        "children"),
-    Output("session-status",    "children"),
-    Output("data-source-badge", "children"),
-    Output("metric-state",      "children"),
-    Output("metric-heartbeat",  "children"),
-    Output("metric-spot",       "children"),
-    Output("metric-mode",       "children"),
-    Input("btn-connect",        "n_clicks"),
-    Input("btn-disconnect",     "n_clicks"),
-    Input("interval-status",    "n_intervals"),
-    State("input-host",         "value"),
-    State("input-port",         "value"),
-    State("input-client-id",    "value"),
-    prevent_initial_call=True,
+    Output("col-status",         "children"),
+    Output("col-source-badge",   "children"),
+    Output("col-metric-state",   "children"),
+    Output("col-metric-cycles",  "children"),
+    Output("col-metric-last",    "children"),
+    Output("col-metric-syms",    "children"),
+    Output("col-symbols-table",  "data"),
+    Input("col-interval",        "n_intervals"),
 )
-def handle_connection(n_connect, n_disconnect, n_intervals, host, port, client_id):
-    from dash import ctx
+def refresh_collector(_):
+    st        = datasource.collector_status()
+    connected = datasource.is_collector_connected
+    src       = datasource.get_data_source_label()
 
-    triggered = ctx.triggered_id
-
-    # ── Bouton Connecter — non-bloquant ──
-    if triggered == "btn-connect":
-        datasource.connect(
-            host=host or "127.0.0.1",
-            port=int(port or 7497),
-            client_id=int(client_id or 1),
-        )
-        alert = dbc.Alert("Connexion en cours... (statut mis à jour dans 5s)",
-                          color="info", dismissable=True, duration=6000)
-
-    # ── Bouton Déconnecter ──
-    elif triggered == "btn-disconnect":
-        datasource.disconnect()
-        alert = dbc.Alert("Déconnecté. Retour en mode mock.",
-                          color="warning", dismissable=True, duration=3000)
-
-    # ── Rafraîchissement automatique ──
+    # Panneau statut
+    if not st:
+        dot_cls, state_lbl = "status-disconnected", "NON DÉMARRÉ"
+    elif connected:
+        dot_cls, state_lbl = "status-connected", "ACTIF · CONNECTÉ"
     else:
-        # Afficher l'erreur si connexion échouée
-        if datasource.last_error and not datasource.is_connected:
-            alert = dbc.Alert(f"Erreur : {datasource.last_error}",
-                              color="danger", dismissable=True)
-        else:
-            alert = ""
-
-    # ── Construction du panneau statut ──
-    connected = datasource.is_connected
-    state_lbl = datasource.state_label
-    hb_age    = datasource.heartbeat_age
-    hb_str    = f"{hb_age:.0f}s" if hb_age is not None else "—"
-    conn_at   = datasource.connected_at_str
-
-    status_color  = "status-connected" if connected else "status-disconnected"
-    status_dot    = "●"
+        dot_cls, state_lbl = "status-disconnected", "ARRÊTÉ / DÉCONNECTÉ"
 
     status_panel = [
         html.Div([
-            html.Span(f"{status_dot} ", className=status_color),
-            html.Span(state_lbl,        className=status_color),
+            html.Span("● ", className=dot_cls),
+            html.Span(state_lbl, className=dot_cls),
         ], className="mb-3 fs-5"),
-        _info_row("Heartbeat",    hb_str),
-        _info_row("Connecté à",   conn_at),
-        _info_row("Mode données", "Live (IBKR)" if connected else "Simulées (mock)"),
-        _info_row("Erreur",       datasource.last_error or "—"),
+        _info_row("Démarré",       _age_str(st.get("started_at"))),
+        _info_row("Dernier cycle", _age_str(st.get("last_cycle"))),
+        _info_row("Cycles",        str(st.get("cycle_count", 0))),
+        _info_row("Connexion IBKR", "oui" if st.get("connected") else "non"),
     ]
 
-    # ── Badge source de données ──
-    if connected:
-        spot = datasource.get_spot()
-        badge = [
-            dbc.Badge("LIVE — données IBKR différées 15 min",
-                      color="success", className="fs-6 p-2"),
-            html.P(f"Spot SPY live : ${spot:.2f} · Chaîne calculée sur spot réel",
-                   className="text-muted small mt-2 mb-0"),
-        ]
-        spot_str = f"${spot:.2f}"
-        mode_str = "Live"
+    # Badge source
+    if src == "Live (collecteur)":
+        badge = [dbc.Badge("LIVE — collecteur actif", color="success", className="fs-6 p-2"),
+                 html.P("Données rafraîchies en continu par le collecteur.",
+                        className="text-muted small mt-2 mb-0")]
+    elif src == "Analytics (store)":
+        badge = [dbc.Badge("STORE — collecteur inactif", color="info", className="fs-6 p-2"),
+                 html.P("Dernières données persistées (collecteur arrêté).",
+                        className="text-muted small mt-2 mb-0")]
     else:
-        spot_str = f"${datasource.get_spot():.2f} (mock)"
-        mode_str = "Mock"
-        badge = [
-            dbc.Badge("MOCK — données simulées", color="warning", className="fs-6 p-2"),
-            html.P("Spot SPY fictif · Chaîne d'options calculée",
-                   className="text-muted small mt-2 mb-0"),
-        ]
+        badge = [dbc.Badge("AUCUNE DONNÉE", color="danger", className="fs-6 p-2"),
+                 html.P("Lancez le collecteur pour alimenter le dashboard.",
+                        className="text-muted small mt-2 mb-0")]
 
-    # ── Métriques ──
-    css_state = "positive" if connected else "negative"
-    m_state   = _metric_box(state_lbl,  "État",      css_state)
-    m_hb      = _metric_box(hb_str,     "Heartbeat", "positive" if connected else "")
-    m_spot    = _metric_box(spot_str,   "Spot SPY")
-    m_mode    = _metric_box(mode_str,   "Mode",      "positive" if connected else "warning")
+    # Métriques
+    symbols = st.get("symbols", {})
+    n_with_data = sum(1 for s in symbols.values() if s.get("spot"))
+    m_state  = _metric_box(state_lbl.split(" ")[0], "État",
+                           "positive" if connected else "negative")
+    m_cycles = _metric_box(str(st.get("cycle_count", 0)), "Cycles")
+    m_last   = _metric_box(_age_str(st.get("last_cycle")), "Dernier cycle",
+                           "positive" if connected else "")
+    m_syms   = _metric_box(f"{n_with_data}/{len(symbols) or len(datasource.available_symbols)}",
+                           "Symboles avec données")
 
-    return alert, status_panel, badge, m_state, m_hb, m_spot, m_mode
+    # Table des symboles
+    rows = []
+    for sym in datasource.available_symbols:
+        sd = symbols.get(sym, {})
+        spot = sd.get("spot")
+        rows.append({
+            "symbol":   sym,
+            "spot":     f"${float(spot):.2f}" if spot else "—",
+            "n_quotes": sd.get("n_quotes", 0),
+            "updated":  _age_str(sd.get("updated")),
+            "state":    "OK" if spot else ("erreur" if sd.get("error") else "—"),
+        })
+
+    return status_panel, badge, m_state, m_cycles, m_last, m_syms, rows
