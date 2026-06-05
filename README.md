@@ -48,7 +48,7 @@ architecture_risque/
 │   ├── forward.py              # Page 4  — Forward & Carry
 │   ├── implied_vol.py          # Page 5  — Volatilité Implicite
 │   ├── surface.py              # Page 6  — Surface de Vol (3D)
-│   ├── pricing.py              # Page 7  — Pricer interactif
+ │   ├── pricing.py              # Page 7  — Pricer interactif
 │   ├── greeks.py               # Page 8  — Greeks & Risk
 │   ├── scenarios.py            # Page 9  — Scénarios de stress
 │   └── qc.py                   # Page 10 — QC & Validation
@@ -135,3 +135,7 @@ Tant que TWS n'est pas connecté, `src/data/mock.py` génère des données réal
 - SPY à 520$ avec smile de volatilité (put skew négatif typique du S&P)
 - 6 maturités : 7, 14, 30, 60, 90, 180 jours
 - Portefeuille short strangle pour démontrer les Greeks et scénarios
+=======
+# modelisation_risque_strategie_trading
+création d'une architecture de modélisation de risque d'une stratégie de trading
+>>>>>>> origin/main
