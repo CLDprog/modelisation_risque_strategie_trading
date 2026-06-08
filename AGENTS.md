@@ -1,82 +1,75 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working in this repository.
+
+## Connexion broker — IBKR Web API (plus de TWS)
+
+La connexion passe par l'**IBKR Client Portal Web API** (REST + WebSocket) via `ibind`,
+isolée derrière un **adaptateur broker-agnostique**. **Plus aucun TWS ni `ib_insync`.**
+Un **gateway** local (Client Portal Gateway Java, ou IBeam Docker) doit être authentifié
+sur `https://localhost:5000` — voir `docs/gateway_setup.md`.
 
 ## Commands
 
 ```bash
-# Lancer l'app Dash (frontend)
-python app.py
-# Ouvrir http://localhost:8050
-
-# Tests unitaires
-python -m pytest tests/ -v
-
-# Un seul test
-python -m pytest tests/test_pricing.py::test_put_call_parity -v
-
-# Test de connexion IBKR (TWS doit être ouvert)
-python scripts/bootstrap.py
-
-# Pipeline EOD complet (données historiques)
+# Gateway d'abord (voir docs/gateway_setup.md), puis :
+python run_collector.py          # collecteur (possède la session, alimente le store)
+python app.py                    # dashboard (lit le store) → http://localhost:8050
+python scripts/bootstrap.py      # smoke test Web API
+python -m pytest tests/ -v       # tests
 python -c "from src.orchestration.jobs import run_eod_pipeline; from datetime import date; run_eod_pipeline(date.today())"
 ```
 
 ## Architecture
 
-Le projet implémente une infrastructure de risque de volatilité en 16 étapes. Les couches sont strictement séparées et ne remontent jamais vers l'amont.
+Infrastructure de risque de volatilité en 16 étapes. Couches strictement séparées.
 
 ```
-IBKR → connectivity → collectors → snapshots → forwards → iv → surfaces → pricing → risk → qc
+IBKR Web API → connectivity(adapter) → collectors → snapshots → forwards → iv → surfaces → pricing → risk → qc
 ```
 
-**Règle fondamentale :** les données brutes (`raw_market_events`) sont immuables et append-only. Toutes les analytics sont dérivées et recalculables depuis les raw events.
+**Règle fondamentale :** `raw_market_events` est immuable et append-only ; toutes les analytics sont recalculables depuis le raw.
 
 ### Couches backend (`src/`)
 
 | Module | Rôle clé |
 |--------|----------|
-| `connectivity/session.py` | `IBKRSession` — machine d'état 5 états, reconnect exponentiel avec jitter |
-| `universe/contracts.py` | `InstrumentMaster` + `Underlying` + `OptionContract` — source de vérité unique pour les instruments |
-| `collectors/raw_writer.py` | `RawMarketEvent` (dataclass) → `RawEventWriter` (buffer + flush Parquet). Aucune analytics dans les callbacks. |
-| `snapshots/builder.py` | Fonctions pures : `build_snapshot()` déterministe. Même inputs → même output. |
-| `forwards/engine.py` | `estimate_forward()` : parity put-call + pondération par liquidité + rejet outliers MAD |
-| `iv/solver.py` | `solve_iv()` : Brent bracketé → `IvSolveResult` toujours retourné, même en échec |
-| `surfaces/calibration.py` | SVI par tranche, spline fallback, check monotonicit calendaire |
-| `pricing/european.py` | Black-76 + Greeks analytiques (Delta, Gamma, Vega, Theta, $Gamma, $Vega) |
-| `pricing/american.py` | CRR binomial tree — `price_american_binomial()` |
-| `risk/aggregation.py` | `compute_position_risk()` → agrégation par `aggregate_risk()` |
-| `risk/scenarios.py` | `run_all_scenarios()` : repricing complet + approximation Eq.19 |
-| `qc/checks.py` | 8 checks nommés retournant `QcResult(status, severity, measured_value, threshold, reason_code)` |
-| `storage/schemas.py` | `ParquetStore` (partitionné par date) + `MetadataStore` (SQLite via SQLAlchemy) |
-| `orchestration/jobs.py` | `run_eod_pipeline()` : enchaîne toutes les étapes, écrit un manifest JSON |
-
-### Données simulées
-
-`src/data/mock.py` génère des données SPY réalistes (spot 520$, smile put skew, 6 maturités) pour le développement sans IBKR. Le front Dash consomme ces données. Remplacé par les données live une fois TWS connecté.
+| `connectivity/broker.py` | `BrokerAdapter` (ABC) broker-agnostique + types normalisés (jamais de SDK broker ici) |
+| `connectivity/ibkr_webapi.py` | `IBKRWebAdapter` — wrappe `ibind` : auth/tickle, conids, snapshots (greeks), positions |
+| `universe/contracts.py` | `InstrumentMaster` + `Underlying`/`OptionContract` ; `discover_universe(adapter,…)` |
+| `collectors/raw_writer.py` | `RawMarketEvent` + `RawEventWriter` (buffer + flush Parquet) |
+| `snapshots/builder.py` | `build_snapshot()` pur et déterministe |
+| `forwards/engine.py` | `estimate_forward()` : parité put-call + pondération liquidité + rejet MAD |
+| `iv/solver.py` | `solve_iv()` Brent ; inversion américaine CRR → `IvSolveResult` |
+| `surfaces/calibration.py` | SVI par tranche + spline fallback + monotonie calendaire + no-arb papillon |
+| `pricing/european.py` · `american.py` | Black-76 + Greeks analytiques · arbre CRR |
+| `risk/aggregation.py` · `scenarios.py` | Greeks ligne/agrégats · repricing complet + approximation Eq.19 |
+| `qc/checks.py` · `anomaly.py` | Checks QC nommés · baselines/anomalies (MAD) |
+| `storage/schemas.py` | `ParquetStore` (par date) + `MetadataStore` (SQLite via SQLAlchemy) |
+| `orchestration/jobs.py` | `build_snapshots_job()` + `run_eod_pipeline()` + `replay_pipeline()` |
+| `data/live.py` | Fetchers Web API + analytics dérivées (purs) |
+| `data/source.py` | `DataSource` — lecteur de store pur (front) |
 
 ### Frontend Dash (`app.py` + `pages/`)
 
-App multi-pages Dash avec sidebar fixe. Chaque page dans `pages/` est autonome : elle importe depuis `src/data/mock` et appelle directement les fonctions de calcul `src/`. Les callbacks sont définis en bas de chaque fichier page avec `@callback`.
-
-Thème : dark custom via `assets/style.css`. Classes CSS clés : `.metric-box`, `.formula-box`, `.card`, `.page-header`.
+App multi-pages, sidebar fixe + sélecteur de produit. Chaque page est callback-driven et
+lit le store via `DataSource` (jamais IBKR). `dcc.Store(id="selected-symbol")` partagé.
+Thème dark via `assets/style.css`.
 
 ### Configuration (`configs/`)
 
-Tous les seuils économiques sont dans les YAML — jamais dans le code. Chargés via `src/utils/config.load_config(name)`. Fichiers : `broker`, `universe`, `qc`, `pricing`, `scenarios`, `environment`.
+Tous les seuils économiques dans les YAML (chargés via `src/utils/config.load_config`).
+Fichiers : `broker` (section `webapi`), `universe`, `qc`, `pricing`, `scenarios`, `environment`.
 
 ### Conventions mathématiques
 
-- Moneyness : log-moneyness `k = ln(K/F)` (par rapport au forward, pas au spot)
-- Surface : interpolée en **variance totale** `w = σ²T`, pas en volatilité brute
-- Vega : par **1 point de vol** (×0.01)
-- Theta : par **jour calendaire** (÷365)
-- Day-count : ACT/365
-- Timestamps : UTC partout
+- Moneyness `k = ln(K/F)` (vs forward) · Surface en **variance totale** `w = σ²T`
+- Vega par **1 point de vol** (×0.01) · Theta par **jour calendaire** (÷365)
+- Day-count ACT/365 · Timestamps UTC
 
 ## Points d'attention
 
-- `IBKRSession` requiert TWS ou IB Gateway ouvert sur le port configuré (défaut 7497 paper TWS). Le bootstrap vérifie la connectivité avant tout.
-- Les schemas Parquet et SQLite sont initialisés automatiquement au premier `ParquetStore` / `MetadataStore`.
-- Les équations de référence (Eq.1–25) sont documentées dans `docs/methodology.md`.
-- `src/data/mock.py` doit rester synchronisé avec les colonnes attendues par les pages Dash quand les schémas évoluent.
+- Le **gateway Web API** doit être authentifié (`https://localhost:5000`) avant le collecteur.
+- Le code n'importe jamais `ibind` directement — uniquement `BrokerAdapter`.
+- Équations de référence (Eq.1–25) dans `methodology.md`.
+- Ajouter un symbole = une entrée dans `configs/universe.yaml` (chaîne découverte automatiquement).

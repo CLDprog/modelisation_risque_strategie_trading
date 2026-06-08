@@ -1,28 +1,30 @@
 """
 run_collector.py — Process collecteur autonome (roadmap : "Collector service").
 
-Responsabilité unique : posséder la connexion IBKR, collecter les données de marché
-à un rythme maîtrisé, calculer les analytics et les persister dans le store.
-Le front Dash ne fait que LIRE ce store — il ne parle jamais à IBKR.
+Responsabilité unique : posséder la connexion IBKR (via la Client Portal Web API),
+collecter les données de marché à un rythme maîtrisé, calculer les analytics et les
+persister dans le store. Le front Dash ne fait que LIRE ce store — il ne parle
+jamais à IBKR.
 
 Conforme à la roadmap :
   - "one always-on collector process" (Part IV.I)
   - "Keep the connectivity process separate from the analytics process" (Part I)
   - process isolation → un pic CPU dans l'UI ne peut plus couper la connexion
 
+Prérequis : un Client Portal Gateway (ou IBeam) authentifié sur https://host:port.
+
 Usage :
-    python run_collector.py                 # 127.0.0.1:7497, clientId 1
-    python run_collector.py --port 4002      # IB Gateway paper
-    python run_collector.py --interval 60    # cycle toutes les 60 s
+    python run_collector.py                     # 127.0.0.1:5000
+    python run_collector.py --interval 60        # cycle toutes les 60 s
+    python run_collector.py --account-id DU123   # force le compte (sinon auto-découvert)
 """
 from __future__ import annotations
 
 import sys
 import os
 import json
-import asyncio
+import time
 import argparse
-import tempfile
 from pathlib import Path
 from datetime import date, datetime, timezone
 
@@ -31,14 +33,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pandas as pd
 from loguru import logger
 
-from ib_insync import IB
+from src.connectivity.ibkr_webapi import IBKRWebAdapter
+from src.connectivity.broker import SessionState
 
 ROOT         = Path(__file__).parent
 DATA_DIR     = ROOT / "data"
 STATUS_FILE  = DATA_DIR / "collector_status.json"
 
 # Version de code propagée dans la lineage de chaque sortie (roadmap : provenance)
-CODE_VERSION = "vol-infra-collector-2.1.0"
+CODE_VERSION = "vol-infra-collector-3.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +62,7 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 
 class Collector:
 
-    def __init__(self, host: str, port: int, client_id: int,
+    def __init__(self, host: str, port: int, account_id, use_oauth: bool,
                  interval: int, symbol_pause: float):
         import hashlib
         import uuid
@@ -68,7 +71,8 @@ class Collector:
 
         self.host          = host
         self.port          = port
-        self.client_id     = client_id
+        self.account_id    = account_id
+        self.use_oauth     = use_oauth
         self.interval      = interval
         self.symbol_pause  = symbol_pause
 
@@ -90,7 +94,13 @@ class Collector:
         self.raw_store  = ParquetStore(DATA_DIR / "raw")   # couche brute immuable
         self.meta_store = MetadataStore(DATA_DIR / "metadata.db")
         self._master_saved_date = None    # pour ne persister le master qu'une fois/jour
-        self.ib         = IB()
+
+        # L'adaptateur Web API possède la session (tickle/keep-alive en arrière-plan).
+        self.adapter = IBKRWebAdapter(
+            host=self.host, port=self.port,
+            account_id=self.account_id, use_oauth=self.use_oauth,
+        )
+
         self._running = True
         self._status = {
             "connected":  False,
@@ -104,38 +114,25 @@ class Collector:
     # Connexion (avec backoff)
     # ------------------------------------------------------------------
 
-    async def connect(self) -> bool:
+    def connect(self) -> bool:
         """
-        Connexion avec essai automatique de clientId successifs.
-        Si le clientId configuré est déjà pris (err 326, connexion zombie),
-        on tente clientId+1, +2, … (roadmap : "confirm client ID not duplicated").
+        Valide/établit la session Web API via le gateway. Backoff exponentiel.
+        Le gateway (Client Portal / IBeam) doit être lancé ET authentifié.
         """
-        base  = self.client_id
         delay = 2.0
-        for offset in range(8):
-            cid = base + offset
-            try:
-                if self.ib.isConnected():
-                    self.ib.disconnect()
-                logger.info(f"Connexion IBKR {self.host}:{self.port} (clientId {cid})")
-                await self.ib.connectAsync(self.host, self.port,
-                                           clientId=cid, timeout=10)
-                self.ib.reqMarketDataType(3)   # delayed
-                self.client_id = cid
-                self._status["connected"]  = True
-                self._status["client_id"]  = cid
-                logger.success(f"Connecté à IBKR (clientId {cid})")
+        for attempt in range(5):
+            if self.adapter.connect():
+                self.account_id = self.adapter.account_id or self.account_id
+                self._status["connected"] = True
+                self._status["account_id"] = self.account_id
+                logger.success(f"Connecté à la Web API IBKR (compte {self.account_id})")
                 return True
-            except Exception as exc:
-                msg = str(exc)
-                if "326" in msg or "already in use" in msg.lower():
-                    logger.warning(f"clientId {cid} déjà utilisé — essai du suivant ({cid+1})")
-                    await asyncio.sleep(0.5)
-                    continue
-                logger.warning(f"Échec connexion (clientId {cid}) : {exc} — retry dans {delay:.0f}s")
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 60)
-        logger.error("Connexion IBKR impossible (tous les clientId essayés occupés ?)")
+            logger.warning(f"Session non authentifiée (essai {attempt+1}) — "
+                           f"gateway lancé et connecté ? Retry dans {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 60)
+        logger.error("Connexion Web API impossible — vérifie le gateway "
+                     "(https://localhost:5000) et son login navigateur.")
         self._status["connected"] = False
         return False
 
@@ -143,8 +140,8 @@ class Collector:
     # Collecte d'un symbole
     # ------------------------------------------------------------------
 
-    async def collect_symbol(self, symbol: str) -> dict:
-        from src.data.live import (fetch_spot_async, fetch_option_chain_async,
+    def collect_symbol(self, symbol: str) -> dict:
+        from src.data.live import (fetch_spot, fetch_option_chain,
                                     compute_live_analytics)
 
         result = {
@@ -153,11 +150,12 @@ class Collector:
             "surface_df": pd.DataFrame(), "chain_df": pd.DataFrame(),
         }
 
-        spot = await fetch_spot_async(self.ib, symbol)
+        spot = fetch_spot(self.adapter, symbol)
         result["spot"] = spot
 
-        chain_df = await fetch_option_chain_async(
-            self.ib, symbol, self.universe_cfg, self.qc_cfg, self.pricing_cfg
+        chain_df = fetch_option_chain(
+            self.adapter, symbol, self.universe_cfg, self.qc_cfg,
+            self.pricing_cfg, spot=spot,
         )
         if chain_df is not None and not chain_df.empty:
             analytics = compute_live_analytics(
@@ -175,14 +173,14 @@ class Collector:
     # Portefeuille + risk + scénarios
     # ------------------------------------------------------------------
 
-    async def collect_portfolio_risk(self, session_date: date,
-                                     spots: dict, run_id: str = "") -> None:
-        from src.data.live import fetch_portfolio_async, enrich_portfolio_greeks
+    def collect_portfolio_risk(self, session_date: date,
+                               spots: dict, run_id: str = "") -> None:
+        from src.data.live import fetch_portfolio, enrich_portfolio_greeks
         from src.risk.scenarios import (load_scenarios_from_config,
                                         run_all_scenarios, scenario_reports_to_dataframe)
         from src.risk.aggregation import Position
 
-        positions_df = await fetch_portfolio_async(self.ib, None)
+        positions_df = fetch_portfolio(self.adapter, None)
         if positions_df is None or positions_df.empty:
             return
 
@@ -228,7 +226,7 @@ class Collector:
     # ------------------------------------------------------------------
 
     def compute_qc(self, session_date: date, iv_all: pd.DataFrame,
-                   fwd_all: pd.DataFrame, surfaces: dict, run_id: str) -> None:
+                   fwd_all: pd.DataFrame, surfaces: dict, run_id: str) -> list:
         from src.qc.checks import (check_iv_convergence, check_surface_fit,
                                    check_quote_health, check_calendar_arbitrage,
                                    QcResult, qc_results_to_dataframe)
@@ -406,7 +404,7 @@ class Collector:
                     "reason": r.reason_code,
                     "collector_session_id": self.collector_session_id,
                 })
-        if not self.ib.isConnected():
+        if not self.adapter.is_healthy():
             alerts.append({"ts": now, "severity": "error", "check": "connectivity",
                            "target": "collector", "status": "fail",
                            "reason": "ibkr_disconnected"})
@@ -417,7 +415,7 @@ class Collector:
     # Un cycle complet
     # ------------------------------------------------------------------
 
-    async def run_cycle(self) -> None:
+    def run_cycle(self) -> None:
         from src.surfaces.calibration import fit_surface
 
         session_date = date.today()
@@ -428,7 +426,7 @@ class Collector:
 
         for symbol in self.symbols:
             try:
-                r = await self.collect_symbol(symbol)
+                r = self.collect_symbol(symbol)
                 spots[symbol] = r["spot"]
                 # COUCHE BRUTE IMMUABLE : on persiste les observations brutes AVANT
                 # tout calcul (roadmap : raw layer append-only, base du replay).
@@ -466,7 +464,7 @@ class Collector:
                     "spot": None, "n_quotes": 0, "error": str(exc)[:120],
                     "updated": datetime.now(timezone.utc).isoformat(),
                 }
-            await asyncio.sleep(self.symbol_pause)
+            time.sleep(self.symbol_pause)
 
         # Écritures combinées (atomiques) + lineage (code_version/config_hash/run_id)
         iv_all  = pd.concat(all_iv, ignore_index=True)  if all_iv  else pd.DataFrame()
@@ -488,7 +486,7 @@ class Collector:
 
         # Portefeuille / risk / scénarios
         try:
-            await self.collect_portfolio_risk(session_date, spots, run_id)
+            self.collect_portfolio_risk(session_date, spots, run_id)
         except Exception as exc:
             logger.warning(f"portfolio/risk : {exc}")
 
@@ -500,7 +498,7 @@ class Collector:
             logger.warning(f"qc : {exc}")
 
         # Statut
-        self._status["connected"]   = self.ib.isConnected()
+        self._status["connected"]   = self.adapter.is_healthy()
         self._status["last_cycle"]  = datetime.now(timezone.utc).isoformat()
         self._status["cycle_count"] += 1
         _atomic_write_json(STATUS_FILE, self._status)
@@ -509,8 +507,8 @@ class Collector:
     # Boucle principale
     # ------------------------------------------------------------------
 
-    async def main_loop(self) -> None:
-        if not await self.connect():
+    def main_loop(self) -> None:
+        if not self.connect():
             self._status["connected"] = False
             _atomic_write_json(STATUS_FILE, self._status)
             return
@@ -518,25 +516,30 @@ class Collector:
         logger.info(f"Collecteur démarré — symboles : {self.symbols} | cycle {self.interval}s")
         try:
             while self._running:
-                if not self.ib.isConnected():
-                    logger.warning("Connexion perdue — reconnexion…")
+                # Heartbeat (tickle + statut d'auth) ; reconnecte si la session a expiré.
+                if not self.adapter.heartbeat():
+                    logger.warning("Session dégradée — tentative de reconnexion…")
                     self._status["connected"] = False
                     _atomic_write_json(STATUS_FILE, self._status)
-                    if not await self.connect():
-                        await asyncio.sleep(self.interval)
+                    if not self.adapter.reconnect():
+                        logger.error("Reconnexion KO — re-login gateway requis ?")
+                        time.sleep(self.interval)
                         continue
 
                 logger.info(f"── Cycle {self._status['cycle_count']} ──")
-                await self.run_cycle()
-                await asyncio.sleep(self.interval)
-        except asyncio.CancelledError:
-            pass
+                self.run_cycle()
+                time.sleep(self.interval)
+        except KeyboardInterrupt:
+            logger.info("Arrêt demandé (Ctrl+C)")
         finally:
+            self._running = False
             self._status["connected"] = False
             self._status["stopped_at"] = datetime.now(timezone.utc).isoformat()
             _atomic_write_json(STATUS_FILE, self._status)
-            if self.ib.isConnected():
-                self.ib.disconnect()
+            try:
+                self.adapter.disconnect()
+            except Exception:
+                pass
             logger.info("Collecteur arrêté.")
 
     def stop(self) -> None:
@@ -547,50 +550,38 @@ class Collector:
 # Entrée CLI
 # ---------------------------------------------------------------------------
 
-def _quiet_ib_noise():
-    """
-    Réduit le bruit console : ib_insync logue chaque contrat sans entitlement
-    (erreurs 200 / 10089 / 10091…). On les filtre — elles sont attendues et déjà
-    gérées (bail-out). Les vraies erreurs restent visibles via nos logs loguru.
-    """
-    import logging
-    noisy = ("Error 200", "Error 300", "Error 354",
-             "Error 10089", "Error 10090", "Error 10091", "Error 10092",
-             "Unknown contract")
-
-    class _Filter(logging.Filter):
-        def filter(self, record):
-            msg = record.getMessage()
-            return not any(n in msg for n in noisy)
-
-    for name in ("ib_insync.wrapper", "ib_insync.client", "ib_insync.ib"):
-        logging.getLogger(name).addFilter(_Filter())
-
-
 def main():
-    _quiet_ib_noise()
-    parser = argparse.ArgumentParser(description="Collecteur IBKR autonome")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=7497)
-    parser.add_argument("--client-id", type=int, default=1)
+    from src.utils.config import load_config
+
+    broker_cfg = load_config("broker")
+    wcfg = broker_cfg.get("webapi", {})
+
+    parser = argparse.ArgumentParser(description="Collecteur IBKR (Web API) autonome")
+    parser.add_argument("--host", default=wcfg.get("host", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=wcfg.get("port", 5000))
+    parser.add_argument("--account-id", default=os.getenv("IBKR_ACCOUNT_ID"),
+                        help="compte paper (DU…) ; auto-découvert si omis")
     parser.add_argument("--interval", type=int, default=120,
                         help="secondes entre deux cycles complets")
-    parser.add_argument("--symbol-pause", type=float, default=3.0,
+    parser.add_argument("--symbol-pause", type=float, default=1.0,
                         help="pause entre symboles (pacing)")
     args = parser.parse_args()
 
-    collector = Collector(args.host, args.port, args.client_id,
-                          args.interval, args.symbol_pause)
+    account_id = args.account_id
+    if account_id in (None, "", "DU0000000"):
+        account_id = None   # l'adaptateur le découvrira après authentification
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    collector = Collector(
+        host=args.host, port=args.port, account_id=account_id,
+        use_oauth=bool(wcfg.get("use_oauth", False)),
+        interval=args.interval, symbol_pause=args.symbol_pause,
+    )
+
     try:
-        loop.run_until_complete(collector.main_loop())
+        collector.main_loop()
     except KeyboardInterrupt:
         logger.info("Arrêt demandé (Ctrl+C)")
         collector.stop()
-    finally:
-        loop.close()
 
 
 if __name__ == "__main__":

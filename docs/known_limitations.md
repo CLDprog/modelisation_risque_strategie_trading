@@ -1,34 +1,40 @@
 # Limitations connues
 
-Document exigé par la roadmap (Step 16). État au 2026-06-04.
+Document exigé par la roadmap (Step 16). État au **2026-06-08** (après migration TWS → IBKR Web API).
 
-## Contraintes externes (hors code)
+## Prérequis d'exploitation (à connaître)
 
-| Limitation | Cause | Impact | Contournement |
-|------------|-------|--------|---------------|
-| **Options NASDAQ (QQQ, AAPL) sans quotes** | Pas d'abonnement market data OPRA sur le compte paper (erreur IBKR 10089) | Chaînes options vides pour ces sous-jacents | Activer l'abonnement OPRA (différé gratuit) dans le Client Portal IBKR |
-| **Données différées 15 min** | Compte paper sans temps réel | Le spot/les quotes accusent 15 min de retard | Suffisant pour un usage analytique ; abonnement temps réel sinon |
-| **Spot QQQ/AAPL via close historique** | Pas de tick différé temps réel pour ces actions | Spot = dernier close (pas intraday) | Repli automatique sur `reqHistoricalData` |
+| Point | Détail |
+|-------|--------|
+| **Gateway local requis** | Le compte retail/paper accède à la Web API via un gateway local (Client Portal Gateway Java, ou IBeam Docker) sur `https://localhost:5000`. Le « zéro process local » (OAuth headless) est réservé à l'institutionnel. |
+| **Re-login périodique (voie Java)** | La session gateway expire après inactivité prolongée. Le collecteur la maintient via `tickle`, mais un re-login navigateur peut être requis après une longue coupure. IBeam (Docker) automatise ce point. |
+| **Données différées** | Compte paper → données **différées** (≈15 min). Suffisant pour l'analytique ; abonnement temps réel sinon. |
 
 ## Limitations de conception (assumées)
 
 | Limitation | Détail | Évolution prévue |
 |------------|--------|------------------|
-| **Plage de strikes étroite** | ~±0,3 % autour de l'ATM (budget limité pour le pacing) | Élargir `max_strikes_per_side` une fois l'abonnement options actif |
-| **Maturités courtes** | 4 échéances les plus proches (7–12 j) | Étendre la fenêtre de maturités dans `universe.yaml` |
-| **Replay** | Démontrable depuis la couche brute désormais écrite, mais non rejoué sur de longues périodes | Backfill limité par le pacing/entitlement IBKR |
+| **Plage de strikes** | Fenêtre ATM budgétée (`max_strikes_per_side`) pour limiter le nombre de lignes | Élargir si besoin (la Web API supporte plus de volume) |
+| **Maturités** | 4 échéances les plus proches par défaut | Étendre la fenêtre dans `universe.yaml` |
 | **Carry constant** | Carry implicite reconstruit par parité, pas de courbe de dividendes externe | Brancher une source de dividendes si nécessaire |
-| **IV américaine** | Inversion via CRR (80 pas) — plus lente que l'européenne | Acceptable pour usage diagnostic |
+| **IV américaine** | Inversion via CRR — plus lente que l'européenne | Acceptable pour usage diagnostic |
+| **Greeks broker** | Captés via snapshot mais utilisés en diagnostic seulement | Réconciliation broker vs plateforme (backlog audit) |
 
 ## Limitations d'exploitation
 
-- Pas de scheduler système (cron/systemd) : le collecteur tourne en boucle continue, à superviser manuellement.
-- Alertes légères (log/statut JSON) ; pas de routage email/Slack.
-- Anomaly detection / baselines glissantes : mécanisme à enrichir au fil de l'historique accumulé.
-- Pas d'environnements dev/staging/prod séparés (poste local unique).
+- **Pas de scheduler système** (cron/systemd/Airflow) : le collecteur tourne en boucle continue, à superviser. IBeam couvre le redémarrage du gateway, pas du collecteur.
+- **Alertes légères** : `data/alerts.json` (QC fail + déconnexion) ; pas de routage email/Slack.
+- **Poste local unique** : pas d'environnements dev/staging/prod séparés.
+
+## Résolu par la migration Web API
+
+- ✅ **Stabilité de connexion** : plus de TWS instable ; gateway léger + `tickle` keep-alive + reconnexion.
+- ✅ **Options AAPL / QQQ** : désormais **accessibles** en données différées via la Web API.
+  L'ancienne erreur OPRA `10089` (côté TWS) a disparu. (QQQ peut rester *thin* hors séance.)
 
 ## Ce qui N'EST PAS une limitation (validé)
 
-- Cohérence quantitative : parité put-call au centime, identités de Greeks exactes, pricer exact au décimal, round-trip IV→prix au ¼ de cent (voir backtests).
-- Stabilité de connexion : isolation collecteur/dashboard, reconnexion, throttle anti-pacing.
-- Traçabilité : couche brute immuable + lineage (code_version, config_hash, run_id) sur les sorties.
+- Cohérence quantitative : parité put-call au centime, identités de Greeks exactes, round-trip IV→prix précis.
+- Isolation 2-process (collecteur/dashboard) : un incident UI n'affecte pas la collecte.
+- Traçabilité : couche brute immuable + lineage (`code_version`, `config_hash`, `run_id`) sur les sorties.
+- Adaptateur broker-agnostique : le code ne dépend pas du SDK ; broker swappable / mockable pour les tests.

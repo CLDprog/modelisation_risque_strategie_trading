@@ -1,141 +1,188 @@
 # Vol Risk Infrastructure
 
-Infrastructure de risque de volatilité de niveau institutionnel — Projet M1 Trading Algorithmique.
+Infrastructure de risque de volatilité de niveau institutionnel — **Projet M1 Trading Algorithmique**.
 
-## Vue d'ensemble
+Le projet implémente les **16 étapes** du roadmap fourni en cours : collecte de données de marché → forward / carry → volatilité implicite → surface de volatilité (SVI) → pricing → Greeks → scénarios de stress → contrôle qualité (QC), avec persistance, orchestration et observabilité.
 
-Ce projet implémente les 16 étapes du roadmap fourni en cours, en construisant une pile complète :
-collecte de données → surface de volatilité → pricing → Greeks → scénarios de stress → QC.
+> ### 🔌 Connexion broker : IBKR **Client Portal Web API** (REST + WebSocket) — **sans TWS**
+> Le projet n'utilise **plus TWS** (l'application de bureau, instable : popups, redémarrage quotidien, déconnexions). À la place, un **gateway léger** tient la session IBKR authentifiée et le code lit les données en HTTP sur `https://localhost:5000`. Deux options de gateway :
+> - **Client Portal Gateway (Java)** — le plus simple à démarrer ▶ voir **[docs/gateway_setup.md](docs/gateway_setup.md)**
+> - **IBeam (Docker)** — automatisé / headless, pour un usage « production » ▶ voir [gateway/docker-compose.yml](gateway/docker-compose.yml)
+>
+> Le code Python parle au gateway via la librairie [`ibind`](https://github.com/Voyz/ibind), isolée derrière un **adaptateur broker-agnostique** (`src/connectivity/broker.py`). Aucun autre module ne dépend du SDK broker.
 
-## Stack technique
+---
 
-| Composant | Technologie |
-|-----------|-------------|
-| Connexion broker | `ib_insync` (IBKR TWS/Gateway) |
-| Calcul numérique | `numpy`, `scipy` |
-| Stockage | `pandas`, `pyarrow` (Parquet), `SQLite` |
-| Frontend | `dash`, `dash-bootstrap-components`, `plotly` |
-| Tests | `pytest` |
-| Configuration | `YAML` + `.env` |
+## Architecture — 2 process découplés (roadmap : *process isolation*)
 
-## Installation
+```
+        [ Compte IBKR paper ]
+                 ▲   login (1× via le gateway)
+        ┌────────┴─────────┐
+        │  GATEWAY Web API │   Client Portal Gateway (Java)  OU  IBeam (Docker)
+        │  https://:5000   │
+        └────────▲─────────┘
+                 │ REST / WebSocket (ibind)
+        ┌────────┴───────────────┐
+        │  run_collector.py      │  ← POSSÈDE la session, collecte + analytics
+        │  (collecteur autonome) │     tickle keep-alive, reconnexion
+        └────────┬───────────────┘
+                 │ écrit
+        ┌────────▼───────────────────────────────────┐
+        │  data/  (store)                             │
+        │   raw/        events bruts immuables        │
+        │   analytics/  iv_points, forward_curve,     │
+        │               surface_grid, risk, scénarios │
+        │   collector_status.json · metadata.db       │
+        └────────┬───────────────────────────────────┘
+                 │ LIT uniquement (jamais IBKR)
+        ┌────────▼───────────────┐
+        │  app.py  (dashboard)   │  http://localhost:8050
+        └────────────────────────┘
+```
+
+**Pourquoi 2 process ?** Si l'UI plante ou rame, la collecte n'est pas affectée ; si la session IBKR tombe, le dashboard continue d'afficher les dernières données du store. Le front ne se connecte **jamais** à IBKR.
+
+---
+
+## Prérequis
+
+- **Python 3.11+**
+- Un compte **Interactive Brokers paper** (avec ses identifiants paper)
+- **Un gateway** (au choix) :
+  - **Java 8u192+** (testé avec Temurin 25) → Client Portal Gateway — *recommandé pour démarrer*
+  - **ou Docker** → IBeam (auto-authentification headless)
+
+---
+
+## 🚀 Démarrage rapide
 
 ```bash
-# 1. Cloner / ouvrir le dossier
+# 1. Dépendances
 cd architecture_risque
-
-# 2. Installer les dépendances
 pip install -r requirements.txt
 
-# 3. Configurer l'environnement
-cp .env.example .env
-# Éditer .env avec tes paramètres IBKR
-
-# 4. Lancer l'app
-python app.py
-# Ouvrir http://localhost:8050
+# 2. (optionnel) Configurer l'environnement
+cp .env.example .env          # IBKR_ACCOUNT_ID est auto-découvert si laissé vide
 ```
+
+**3. Lancer + authentifier le gateway** (détails pas-à-pas dans [docs/gateway_setup.md](docs/gateway_setup.md)) :
+
+```bash
+# Option A — Client Portal Gateway (Java) :
+#   cd C:\clientportal.gw  &&  bin\run.bat root\conf.yaml
+#   puis ouvrir https://localhost:5000 et se connecter (login paper)
+#
+# Option B — IBeam (Docker) :
+#   docker compose -f gateway/docker-compose.yml up -d
+```
+
+**4. Vérifier que tout est branché (smoke test)** :
+
+```bash
+python scripts/bootstrap.py
+# → Session CONNECTED, conid SPY, snapshot spot, chaîne d'options, greeks, positions, event écrit
+```
+
+**5. Lancer la collecte + le dashboard (2 terminaux)** :
+
+```bash
+# Terminal 1 — collecteur (possède la session, alimente le store)
+python run_collector.py            # options : --interval 60 · --account-id DU…
+
+# Terminal 2 — dashboard (lit le store)
+python app.py                      # → http://localhost:8050
+```
+
+---
+
+## Tests
+
+```bash
+python -m pytest tests/ -q         # 56 tests : pricing, IV solver, forward, no-arb, replay…
+```
+
+---
 
 ## Structure du projet
 
 ```
 architecture_risque/
-├── app.py                      # Point d'entrée Dash
-├── pages/                      # Pages de l'interface
-│   ├── connexion.py            # Page 1  — Connexion IBKR
-│   ├── universe.py             # Page 2  — Instrument Master
-│   ├── market_data.py          # Page 3  — Market Data
-│   ├── forward.py              # Page 4  — Forward & Carry
-│   ├── implied_vol.py          # Page 5  — Volatilité Implicite
-│   ├── surface.py              # Page 6  — Surface de Vol (3D)
- │   ├── pricing.py              # Page 7  — Pricer interactif
-│   ├── greeks.py               # Page 8  — Greeks & Risk
-│   ├── scenarios.py            # Page 9  — Scénarios de stress
-│   └── qc.py                   # Page 10 — QC & Validation
+├── run_collector.py            # Process collecteur (possède la session Web API)
+├── app.py                      # Point d'entrée du dashboard Dash
+├── pages/                      # Pages de l'interface (1 par couche)
+│   ├── connexion.py            #  Monitoring du collecteur
+│   ├── universe.py · market_data.py · forward.py · implied_vol.py
+│   ├── surface.py · pricing.py · greeks.py · scenarios.py · qc.py
 ├── src/
-│   ├── connectivity/session.py # IBKRSession — state machine reconnect
-│   ├── universe/contracts.py   # InstrumentMaster — source de vérité
-│   ├── collectors/raw_writer.py# Collecteur de ticks append-only
-│   ├── snapshots/builder.py    # Snapshots déterministes
-│   ├── forwards/engine.py      # Forward par parité put-call
-│   ├── iv/solver.py            # Solveur IV (méthode de Brent)
-│   ├── surfaces/calibration.py # SVI + spline fallback
-│   ├── pricing/european.py     # Black-Scholes + Greeks analytiques
-│   ├── pricing/american.py     # CRR binomial tree
-│   ├── risk/aggregation.py     # Greeks par position et portefeuille
-│   ├── risk/scenarios.py       # Moteur de scénarios (repricing complet)
-│   ├── qc/checks.py            # Suite de validations nommées
-│   ├── storage/schemas.py      # ParquetStore + MetadataStore SQLite
-│   ├── orchestration/jobs.py   # Pipeline EOD complet
-│   └── data/mock.py            # Données simulées (avant IBKR live)
-├── configs/                    # Fichiers YAML de configuration
-│   ├── broker.yaml             # Paramètres IBKR
-│   ├── universe.yaml           # Underlyings surveillés
-│   ├── qc.yaml                 # Seuils de qualité
-│   ├── pricing.yaml            # Pricer et taux
-│   ├── scenarios.yaml          # Grille de scénarios
-│   └── environment.yaml        # Chemins et logs
-├── tests/                      # 44 tests unitaires
-│   ├── test_pricing.py
-│   ├── test_iv_solver.py
-│   └── test_forward.py
-└── scripts/bootstrap.py        # Smoke test connexion IBKR
+│   ├── connectivity/
+│   │   ├── broker.py           # Interface BrokerAdapter (broker-agnostique) + types
+│   │   └── ibkr_webapi.py      # IBKRWebAdapter — wrappe ibind (REST/WebSocket)
+│   ├── universe/contracts.py   # InstrumentMaster, Underlying, OptionContract
+│   ├── collectors/raw_writer.py# RawMarketEvent + RawEventWriter (couche brute)
+│   ├── snapshots/builder.py    # Snapshots de marché déterministes
+│   ├── forwards/engine.py      # Forward par parité put-call + rejet MAD
+│   ├── iv/solver.py            # Inversion prix→vol (Brent ; CRR pour l'américain)
+│   ├── surfaces/calibration.py # SVI par tranche + spline fallback + no-arbitrage
+│   ├── pricing/european.py     # Black-76 + Greeks analytiques
+│   ├── pricing/american.py     # Arbre binomial CRR
+│   ├── risk/aggregation.py     # Greeks par position et agrégats
+│   ├── risk/scenarios.py       # Repricing complet sous chocs (spot/vol/temps)
+│   ├── qc/checks.py            # Suite de checks QC nommés
+│   ├── qc/anomaly.py           # Baselines glissantes + détection d'anomalies (MAD)
+│   ├── storage/schemas.py      # ParquetStore (par date) + MetadataStore (SQLite)
+│   ├── orchestration/jobs.py   # Pipeline EOD + replay
+│   ├── data/live.py            # Fetchers Web API (spot, chaîne, portefeuille) + analytics
+│   └── data/source.py          # DataSource — lecteur de store pur (côté front)
+├── configs/                    # YAML : broker, universe, qc, pricing, scenarios, environment
+├── gateway/docker-compose.yml  # IBeam (option Docker du gateway)
+├── scripts/bootstrap.py        # Smoke test Web API (Step 1)
+├── tests/                      # 56 tests unitaires
+└── docs/                       # environment · gateway_setup · runbooks · known_limitations · …
 ```
 
-## Architecture en couches
+## Couches backend (`src/`)
 
-```
-[IBKR TWS / Gateway]
-         ↓
-[Connectivity]   session.py         — State machine, reconnect exponentiel
-         ↓
-[Universe]       contracts.py       — Instrument Master canonique
-         ↓
-[Collectors]     raw_writer.py      — Events bruts, append-only, immuables
-         ↓
-[Snapshots]      builder.py         — Snapshots déterministes (mid→last→fallback)
-         ↓
-[Forwards]       engine.py          — F(T) par parité put-call + MAD outlier rejection
-         ↓
-[IV Solver]      solver.py          — Prix → Vol Implicite (Brent bracketé)
-         ↓
-[Surfaces]       calibration.py     — SVI par tranche + interpolation cross-maturité
-         ↓
-[Pricing]        european.py        — Black-Scholes + Greeks analytiques
-                 american.py        — CRR binomial tree
-         ↓
-[Risk]           aggregation.py     — Greeks par position et portefeuille
-                 scenarios.py       — Repricing complet sous chocs
-         ↓
-[QC]             checks.py          — 8 checks nommés (pass/warn/fail)
-[Storage]        schemas.py         — Parquet (timeseries) + SQLite (metadata)
-[Orchestration]  jobs.py            — Pipeline EOD schedulé
-```
+| Module | Rôle clé |
+|--------|----------|
+| `connectivity/broker.py` | `BrokerAdapter` (ABC) : interface unique consommée par tout le code. Types normalisés. |
+| `connectivity/ibkr_webapi.py` | `IBKRWebAdapter` : connexion/auth/tickle, résolution conids, snapshots (greeks), positions — via `ibind` |
+| `universe/contracts.py` | `InstrumentMaster` + `Underlying`/`OptionContract` — clés canoniques, round-trip |
+| `collectors/raw_writer.py` | `RawMarketEvent` + `RawEventWriter` append-only (couche brute immuable) |
+| `snapshots/builder.py` | `build_snapshot()` pur et déterministe |
+| `forwards/engine.py` | `estimate_forward()` : parité put-call + pondération liquidité + rejet MAD + score de confiance |
+| `iv/solver.py` | `solve_iv()` (Brent bracketé) / inversion américaine (CRR) → `IvSolveResult` |
+| `surfaces/calibration.py` | SVI par tranche + spline fallback + monotonie calendaire + no-arbitrage papillon |
+| `pricing/european.py` · `american.py` | Black-76 + Greeks analytiques · arbre CRR |
+| `risk/aggregation.py` · `scenarios.py` | Greeks par position/agrégats · repricing complet + approximation par Greeks |
+| `qc/checks.py` · `anomaly.py` | Checks QC nommés · baselines + anomalies |
+| `storage/schemas.py` | `ParquetStore` (partitionné par date) + `MetadataStore` (SQLite) |
+| `orchestration/jobs.py` | `build_snapshots_job()` + `run_eod_pipeline()` + `replay_pipeline()` |
 
-## Connexion IBKR
+## Configuration (`configs/`)
 
-1. Installer **TWS** depuis interactivebrokers.com → Trading → Trader Workstation
-2. Se connecter au compte **paper trading**
-3. Dans TWS : `Edit → Global Configuration → API → Settings`
-   - ✅ Enable ActiveX and Socket Clients
-   - Port : **7497**
-   - ✅ Allow connections from localhost only
-4. Lancer le bootstrap : `python scripts/bootstrap.py`
+Tous les seuils économiques sont dans les YAML (jamais en dur dans le code), chargés via `src/utils/config.load_config(name)` :
+`broker` (gateway Web API), `universe` (sous-jacents surveillés), `qc` (filtres/seuils), `pricing` (taux, bumps), `scenarios` (grille de stress), `environment` (chemins/logs).
 
-## Tests
+## Conventions mathématiques
 
-```bash
-python -m pytest tests/ -v
-# 44 tests — pricing, IV solver, forward engine
-```
+- Moneyness : log-moneyness `k = ln(K/F)` (par rapport au **forward**, pas au spot)
+- Surface : interpolée en **variance totale** `w = σ²·T`
+- Vega : par **1 point de vol** (×0.01) · Theta : par **jour calendaire** (÷365)
+- Day-count : **ACT/365** · Timestamps : **UTC** partout
 
-## Données simulées
+## Documentation
 
-Tant que TWS n'est pas connecté, `src/data/mock.py` génère des données réalistes :
-- SPY à 520$ avec smile de volatilité (put skew négatif typique du S&P)
-- 6 maturités : 7, 14, 30, 60, 90, 180 jours
-- Portefeuille short strangle pour démontrer les Greeks et scénarios
-=======
-# modelisation_risque_strategie_trading
-création d'une architecture de modélisation de risque d'une stratégie de trading
->>>>>>> origin/main
+| Doc | Contenu |
+|-----|---------|
+| [docs/gateway_setup.md](docs/gateway_setup.md) | **Installer et lancer le gateway IBKR Web** (Java ou Docker), pas-à-pas |
+| [docs/environment.md](docs/environment.md) | Provisioning d'une machine neuve, secrets, artefacts |
+| [docs/runbooks.md](docs/runbooks.md) | Procédures : start-of-day, intraday, end-of-day, replay, incident |
+| [docs/known_limitations.md](docs/known_limitations.md) | Limitations connues et compromis assumés |
+| [docs/interface_contracts.md](docs/interface_contracts.md) | Signatures gelées + schémas des tables |
+| [docs/release_checklist.md](docs/release_checklist.md) | Catégories de changement + checklist de release |
+| [methodology.md](methodology.md) | Cadre mathématique (équations 1–25) |
+
+## Note de migration (TWS → Web API)
+
+Auparavant, le projet se connectait via **TWS** et `ib_insync` (API socket). Il a été migré vers l'**IBKR Client Portal Web API** (REST/WebSocket via `ibind`) car TWS est instable pour un usage automatisé. Effet de bord positif : **les options AAPL/QQQ sont désormais accessibles** (l'ancienne limite OPRA `10089` côté TWS a disparu en données différées). Détails dans [docs/known_limitations.md](docs/known_limitations.md).

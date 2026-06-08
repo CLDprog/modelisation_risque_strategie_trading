@@ -1,7 +1,9 @@
 # Ce module a été supprimé.
-# Toutes les données proviennent exclusivement d'IBKR (TWS/Gateway) ou du store analytique.
+# Toutes les données proviennent exclusivement de la couche analytics (store Parquet),
+# alimentée par le collecteur via l'API IBKR Web (Client Portal Gateway).
 # Aucune donnée simulée ou prédéfinie n'est autorisée dans ce projet.
 raise ImportError(
     "src.data.mock a été supprimé. "
-    "Connectez TWS (port 7497) pour obtenir des données réelles."
+    "Lancez le collecteur (python run_collector.py) avec le gateway IBKR Web "
+    "authentifié sur https://localhost:5000."
 )

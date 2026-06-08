@@ -92,11 +92,12 @@ layout = dbc.Container([
         dbc.CardBody([
             html.P("Dans un terminal séparé, à la racine du projet :", className="text-muted small mb-2"),
             dcc.Markdown("```bash\npython run_collector.py\n```"),
-            html.P("Options : --port 4002 (IB Gateway) · --interval 60 (cycle en secondes)",
+            html.P("Options : --interval 60 (cycle en secondes) · --account-id DU… (sinon auto-découvert)",
                    className="text-muted small mb-3"),
             dbc.Alert(
-                "TWS ou IB Gateway doit être ouvert et connecté (port 7497 paper). "
-                "Le collecteur reconnecte automatiquement si la session tombe.",
+                "Le gateway IBKR Web (Client Portal) doit être lancé et authentifié "
+                "sur https://localhost:5000. Le collecteur reconnecte automatiquement "
+                "si la session tombe.",
                 color="dark", className="mb-0 border border-secondary",
             ),
         ]),

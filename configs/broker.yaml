@@ -1,20 +1,21 @@
-ibkr:
+# IBKR Client Portal Web API (REST/WebSocket via the Client Portal Gateway or IBeam).
+# No TWS. The account id is loaded from .env (IBKR_ACCOUNT_ID) or auto-discovered.
+webapi:
   host: "127.0.0.1"
-  port: 7497              # 7497 = paper TWS, 4002 = paper Gateway
-  client_id: 1
-  timeout_seconds: 10
+  port: 5000             # Client Portal Gateway / IBeam default
+  use_oauth: false       # true = headless OAuth (institutional); false = gateway (retail/paper)
+  tickle_interval_seconds: 60   # keep-alive ping to the gateway
+  cacert: false          # path to a gateway cert for TLS verification, or false to skip
 
+# Generic reconnect / health policy used by the collector loop.
 reconnect:
   max_attempts: 5
   base_delay_seconds: 2
   max_delay_seconds: 60
-  jitter: true
 
 session:
-  heartbeat_interval_seconds: 30
   max_heartbeat_age_seconds: 90
 
 market_data:
   snapshot_cadence_seconds: 5
   max_quote_age_seconds: 60
-  generic_tick_list: "100,101,104,106,165,221,225,232,293,294,295,318"

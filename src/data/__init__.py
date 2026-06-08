@@ -2,19 +2,19 @@
 
 
 def no_data_alert(symbol: str = "") -> object:
-    """Retourne un composant Dash indiquant qu'une connexion TWS est requise."""
+    """Composant Dash indiquant qu'aucune donnée n'est disponible (collecteur arrêté)."""
     import dash_bootstrap_components as dbc
     from dash import html
     sym_label = f" pour {symbol}" if symbol else ""
     return dbc.Alert([
-        html.Strong("Connexion TWS requise"),
+        html.Strong("Aucune donnée disponible"),
         html.Br(),
         html.Span(
-            f"Aucune donnée disponible{sym_label}. "
-            "Connectez-vous à TWS (port 7497) depuis la page "
+            f"Le store est vide{sym_label}. "
+            "Lancez le collecteur (python run_collector.py) avec le gateway IBKR Web "
         ),
-        html.Strong("Connexion IBKR"),
+        html.Strong("authentifié"),
         html.Span(
-            ", ou lancez le pipeline EOD pour charger des données historiques réelles."
+            " (https://localhost:5000), ou rejouez une journée via le pipeline EOD."
         ),
     ], color="warning", className="mt-3")

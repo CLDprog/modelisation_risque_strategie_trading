@@ -219,84 +219,61 @@ class InstrumentMaster:
 
 
 # ---------------------------------------------------------------------------
-# IBKR discovery helper
+# IBKR discovery helper (Client Portal Web API)
 # ---------------------------------------------------------------------------
 
-def discover_universe_from_ibkr(session, universe_cfg: dict) -> InstrumentMaster:
+def discover_universe(adapter, universe_cfg: dict) -> InstrumentMaster:
     """
-    Use ib_insync to discover option chains and populate an InstrumentMaster.
-    Requires an active IBKRSession.
+    Discover option chains via the IBKR Web API adapter and build an InstrumentMaster.
+    Requires a connected BrokerAdapter (see src.connectivity.ibkr_webapi.IBKRWebAdapter).
+
+    Note: the live collector reconstructs the master from observed instrument keys, so
+    this helper is mainly for explicit, on-demand universe materialisation (Step 2).
     """
-    from ib_insync import Stock, Option
-    from src.utils.dates import parse_ibkr_expiry
     import datetime
 
-    ib = session.ib()
     master = InstrumentMaster()
-    master.set_as_of_date(datetime.date.today())
+    today = datetime.date.today()
+    master.set_as_of_date(today)
+
+    opt_cfg = universe_cfg.get("options", {})
+    max_dte = opt_cfg.get("maturity_window_days", 180)
+    min_dte = opt_cfg.get("min_days_to_expiry", 7)
 
     for u_cfg in universe_cfg.get("underlyings", []):
         symbol = u_cfg["symbol"]
-        stock = Stock(symbol, u_cfg["exchange"], u_cfg["currency"])
+        exchange = u_cfg.get("exchange", "SMART")
+        currency = u_cfg.get("currency", "USD")
 
-        # Qualify the contract to get the broker conId
-        qualified = ib.qualifyContracts(stock)
-        if not qualified:
-            logger.warning(f"Could not qualify underlying: {symbol}")
+        conid = adapter.resolve_underlying(symbol, exchange, currency)
+        if conid is None:
+            logger.warning(f"Could not resolve underlying: {symbol}")
             continue
 
-        q = qualified[0]
-        underlying = Underlying(
-            symbol=symbol,
-            exchange=u_cfg["exchange"],
-            currency=u_cfg["currency"],
-            sec_type="STK",
-            description=u_cfg.get("description", ""),
-            contract_id_broker=q.conId,
-        )
-        master.add_underlying(underlying)
-        logger.info(f"Underlying qualified: {underlying.instrument_key} (conId={q.conId})")
+        master.add_underlying(Underlying(
+            symbol=symbol, exchange=exchange, currency=currency, sec_type="STK",
+            description=u_cfg.get("description", ""), contract_id_broker=conid))
+        logger.info(f"Underlying resolved: {symbol} (conid={conid})")
 
-        # Fetch option chain metadata
-        chains = ib.reqSecDefOptParams(
-            symbol, "", "STK", q.conId
-        )
-        if not chains:
+        chain = adapter.option_chain_params(symbol, conid, min_dte, max_dte)
+        if not chain:
             logger.warning(f"No option chain found for {symbol}")
             continue
+        logger.info(f"{symbol}: {len(chain.expiries)} expiries × {len(chain.strikes)} strikes")
 
-        chain = chains[0]
-        opt_cfg = universe_cfg.get("options", {})
-        max_dte = opt_cfg.get("maturity_window_days", 180)
-        min_dte = opt_cfg.get("min_days_to_expiry", 7)
-        today = datetime.date.today()
-
-        valid_expiries = [
-            parse_ibkr_expiry(e)
-            for e in chain.expirations
-            if min_dte <= (parse_ibkr_expiry(e) - today).days <= max_dte
-        ]
-        logger.info(f"{symbol}: {len(valid_expiries)} expiries within window")
-
-        for expiry in valid_expiries:
+        for expiry in chain.expiries:
             for strike in chain.strikes:
                 for right in ("C", "P"):
-                    opt = OptionContract(
-                        underlying_symbol=symbol,
-                        expiry=expiry,
-                        strike=float(strike),
-                        right=right,
-                        exchange=opt_cfg.get("exchange", "SMART"),
+                    master.add_option(OptionContract(
+                        underlying_symbol=symbol, expiry=expiry, strike=float(strike),
+                        right=right, exchange=opt_cfg.get("exchange", "SMART"),
                         currency=opt_cfg.get("currency", "USD"),
                         multiplier=int(chain.multiplier or 100),
-                        trading_class=chain.tradingClass,
-                    )
-                    master.add_option(opt)
+                        trading_class=chain.trading_class))
 
     issues = master.validate()
-    if issues:
-        for issue in issues:
-            logger.warning(f"QC issue: {issue}")
+    for issue in issues:
+        logger.warning(f"QC issue: {issue}")
 
     logger.info(f"Universe discovery complete: {master.summary()}")
     return master
