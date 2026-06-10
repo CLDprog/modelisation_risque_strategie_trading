@@ -1,4 +1,4 @@
-"""Page 7 — Pricer interactif, symbol-aware."""
+﻿"""Page 7 — Pricer interactif, symbol-aware."""
 import sys, math
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -70,7 +70,7 @@ layout = dbc.Container([
                 ], width=2),
                 dbc.Col([
                     html.Label("Taux r (%)", className="text-muted small"),
-                    dbc.Input(id="p-rate",   type="number", value=5.3, step=0.1, className="dash-input"),
+                    dbc.Input(id="p-rate",   type="number", value=2.5, step=0.1, className="dash-input"),
                 ], width=2),
                 dbc.Col([
                     html.Label("Type", className="text-muted small"),
@@ -78,7 +78,7 @@ layout = dbc.Container([
                         id="p-right",
                         options=[{"label": "Call", "value": "C"}, {"label": "Put", "value": "P"}],
                         value="C", clearable=False,
-                        style={"backgroundColor": "#21262d", "color": "#e6edf3"},
+                        style={"backgroundColor": "#ffffff", "color": "#1f2328"},
                     ),
                 ], width=2),
             ], className="g-2 mb-3"),
@@ -144,8 +144,16 @@ def update_pricing(spot, strike, vol_pct, days, rate_pct, right, symbol):
         carry = float(fwd_df["implied_carry"].mean())
     F = spot * math.exp((rate - carry) * T)
 
+    # Multiplicateur réel du contrat (10 pour OESX/indice, 100 pour les actions)
+    chain = datasource.get_option_chain(sym)
+    mult = 100
+    if not chain.empty and "multiplier" in chain.columns:
+        m = chain["multiplier"].dropna()
+        if not m.empty:
+            mult = int(m.iloc[0])
+
     try:
-        euro = price_european(F, K, sigma, T, rate, right, spot, 100)
+        euro = price_european(F, K, sigma, T, rate, right, spot, mult)
         amer = price_american_binomial(spot, K, sigma, T, rate, carry, right, 200)
     except Exception as exc:
         return dbc.Alert(f"Erreur de pricing : {exc}", color="danger")
@@ -158,10 +166,10 @@ def update_pricing(spot, strike, vol_pct, days, rate_pct, right, symbol):
 
     return html.Div([
         dbc.Row([
-            dbc.Col(_mb(f"${euro.price:.4f}",        "Prix Européen (BS)"), width=3),
-            dbc.Col(_mb(f"${amer.price:.4f}",         "Prix Américain (CRR)"), width=3),
-            dbc.Col(_mb(f"${F:.4f}",                  "Forward F(T)"),       width=3),
-            dbc.Col(_mb(f"${amer.price - euro.price:.4f}", "Prime exercice anticipé"), width=3),
+            dbc.Col(_mb(f"{euro.price:,.4f} €",        "Prix Européen (Black-76)"), width=3),
+            dbc.Col(_mb(f"{amer.price:,.4f} €",         "Prix Américain (CRR)"), width=3),
+            dbc.Col(_mb(f"{F:,.4f} €",                  "Forward F(T)"),       width=3),
+            dbc.Col(_mb(f"{amer.price - euro.price:,.4f} €", "Prime exercice anticipé"), width=3),
         ], className="g-3 mb-4"),
 
         dbc.Card([
@@ -180,14 +188,22 @@ def update_pricing(spot, strike, vol_pct, days, rate_pct, right, symbol):
         ], className="card mb-4"),
 
         dbc.Card([
-            dbc.CardHeader("Greeks analytiques"),
+            dbc.CardHeader("Greeks bruts (en %)"),
             dbc.CardBody(dbc.Row([
-                _gbox("Δ Delta",  f"{euro.delta:.6f}",        "dP/dS"),
-                _gbox("Γ Gamma",  f"{euro.gamma:.8f}",        "d²P/dS²"),
-                _gbox("ν Vega",   f"{euro.vega:.6f}",         "dP/dσ (par 1%)"),
-                _gbox("Θ Theta",  f"{euro.theta:.6f}",        "dP/dt (par jour)"),
-                _gbox("$ Gamma",  f"{euro.dollar_gamma:.2f}", "Γ×S²×mult/100"),
-                _gbox("$ Vega",   f"{euro.dollar_vega:.2f}",  "ν×mult"),
+                _gbox("Δ", "Delta",  f"{euro.delta:.6f}",  "dP/dS"),
+                _gbox("Γ", "Gamma",  f"{euro.gamma:.8f}",  "d²P/dS²"),
+                _gbox("ν", "Vega",   f"{euro.vega:.6f}",   "dP/dσ (par 1 pt de vol)"),
+                _gbox("Θ", "Theta",  f"{euro.theta:.6f}",  "dP/dt (par jour)"),
+            ], className="g-3")),
+        ], className="card mb-4"),
+
+        dbc.Card([
+            dbc.CardHeader(f"Greeks monétisés en € (mult = {mult} — spec §5)"),
+            dbc.CardBody(dbc.Row([
+                _gbox("Δ", "Delta €", f"{euro.delta * mult * spot:,.2f} €",    "Δ × mult × S (cash delta)"),
+                _gbox("Γ", "Gamma €", f"{euro.gamma * mult * spot**2:,.2f} €", "Γ × mult × S²"),
+                _gbox("ν", "Vega €",  f"{euro.vega * mult:,.2f} €",            "ν × mult (par pt de vol)"),
+                _gbox("Θ", "Theta €", f"{euro.theta * mult:,.2f} €",           "Θ × mult (par jour)"),
             ], className="g-3")),
         ], className="card"),
     ])
@@ -203,15 +219,27 @@ def _mb(value, label, css=""):
 def _calc_row(name, value, formula):
     return html.Div([
         html.Span(name + " = ", className="text-muted me-2"),
-        html.Span(value, className="text-light fw-bold me-2"),
+        html.Span(value, className="text-dark fw-bold me-2"),
         html.Br(),
         html.Small(formula, className="text-muted"),
     ], className="p-2 border border-secondary rounded")
 
 
-def _gbox(name, value, definition):
+# Style des lettres grecques : serif + grande taille (rendu calligraphique), et
+# textTransform none pour échapper aux MAJUSCULES du CSS (sinon ν → Ν, illisible).
+_GREEK_STYLE = {
+    "fontSize": "2rem", "fontFamily": "Georgia, 'Times New Roman', serif",
+    "color": "#0969da", "textTransform": "none", "lineHeight": "1",
+    "fontStyle": "italic",
+}
+
+
+def _gbox(letter, name, value, definition):
     return dbc.Col(html.Div([
-        html.Div(value,      className="metric-value", style={"fontSize": "1.1rem"}),
+        html.Div([
+            html.Span(letter, style=_GREEK_STYLE, className="me-3"),
+            html.Span(value, className="metric-value", style={"fontSize": "1.05rem"}),
+        ], className="d-flex align-items-center justify-content-center mb-1"),
         html.Div(name,       className="metric-label"),
         html.Small(definition, className="text-muted"),
-    ], className="metric-box"), width=2)
+    ], className="metric-box"), width=3)

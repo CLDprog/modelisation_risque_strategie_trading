@@ -160,22 +160,23 @@ class BrokerAdapter(ABC):
     # -- discovery --------------------------------------------------------
     @abstractmethod
     def resolve_underlying(self, symbol: str, exchange: str = "SMART",
-                           currency: str = "USD") -> Optional[int]:
-        """Return the broker contract id (conid) of an underlying, or None."""
+                           currency: str = "USD", sec_type: str = "STK") -> Optional[int]:
+        """Return the broker contract id (conid) of an underlying (STK, IND, …), or None."""
 
     @abstractmethod
     def option_chain_params(self, symbol: str, underlying_conid: int,
-                            min_dte: int, max_dte: int) -> Optional[OptionChainParams]:
+                            min_dte: int, max_dte: int, sec_type: str = "STK",
+                            exchange: Optional[str] = None) -> Optional[OptionChainParams]:
         """Discover expiries/strikes/multiplier for the option chain in a DTE window."""
 
     @abstractmethod
     def resolve_option(self, underlying_conid: int, expiry: date, strike: float,
-                       right: str) -> Optional[int]:
+                       right: str, exchange: Optional[str] = None) -> Optional[int]:
         """Return the conid of one specific option contract, or None."""
 
     def resolve_options(self, underlying_conid: int, expiries: Sequence[date],
-                        strikes: Sequence[float],
-                        rights: Sequence[str] = ("C", "P")) -> Dict[tuple, int]:
+                        strikes: Sequence[float], rights: Sequence[str] = ("C", "P"),
+                        exchange: Optional[str] = None) -> Dict[tuple, int]:
         """
         Resolve a grid of (expiry, strike, right) → conid. The default loops
         resolve_option; concrete adapters may override with a batched version.
@@ -184,7 +185,28 @@ class BrokerAdapter(ABC):
         for strike in strikes:
             for right in rights:
                 for expiry in expiries:
-                    cid = self.resolve_option(underlying_conid, expiry, strike, right)
+                    cid = self.resolve_option(underlying_conid, expiry, strike, right, exchange)
+                    if cid:
+                        out[(expiry, strike, right)] = cid
+        return out
+
+    def strikes_for_expiry(self, underlying_conid: int, expiry: date,
+                           exchange: Optional[str] = None) -> List[float]:
+        """Listed strikes for one expiry. Default empty; concrete adapters override."""
+        return []
+
+    def resolve_option_grid(self, underlying_conid: int, expiry_to_strikes: dict,
+                            rights: Sequence[str] = ("C", "P"),
+                            exchange: Optional[str] = None) -> Dict[tuple, int]:
+        """
+        Resolve a full grid {expiry: [strikes]} -> {(expiry, strike, right): conid}.
+        Default loops resolve_option; concrete adapters may parallelise.
+        """
+        out: Dict[tuple, int] = {}
+        for expiry, strikes in expiry_to_strikes.items():
+            for strike in strikes:
+                for right in rights:
+                    cid = self.resolve_option(underlying_conid, expiry, strike, right, exchange)
                     if cid:
                         out[(expiry, strike, right)] = cid
         return out

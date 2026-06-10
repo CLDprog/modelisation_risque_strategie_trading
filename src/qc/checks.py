@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 
+import math
+
 import pandas as pd
 import numpy as np
 from loguru import logger
@@ -183,6 +185,169 @@ def check_calendar_arbitrage(surface_result, underlying_symbol: str) -> QcResult
                     float(n_viol), 0.0, reason,
                     {"calendar_ok": cal_ok, "butterfly_ok": bf_ok,
                      "n_butterfly_violations": n_viol})
+
+
+def check_option_chain_coverage(iv_points_df: pd.DataFrame, underlying_symbol: str,
+                                 expected_quotes: int,
+                                 min_coverage_ratio: float = 0.5) -> QcResult:
+    """
+    Complétude de la chaîne (roadmap : 'option chain coverage') : part des quotes
+    USABLE collectées rapportée à la grille cible (tenors × (ATM + ailes) × call/put).
+    """
+    df = iv_points_df[iv_points_df["underlying_symbol"] == underlying_symbol]
+    if df.empty:
+        return QcResult("option_chain_coverage", underlying_symbol, "fail", "error",
+                        0.0, min_coverage_ratio, "no_quotes", {})
+    n_usable = int(df["is_usable"].sum()) if "is_usable" in df.columns else len(df)
+    n_expiries = int(df["expiry"].nunique())
+    coverage = n_usable / expected_quotes if expected_quotes > 0 else 0.0
+    if coverage >= min_coverage_ratio:
+        status, severity, reason = "pass", "info", "ok"
+    elif coverage > 0:
+        status, severity, reason = "warn", "warning", "partial_coverage"
+    else:
+        status, severity, reason = "fail", "error", "no_usable_quotes"
+    return QcResult("option_chain_coverage", underlying_symbol, status, severity,
+                    round(coverage, 4), min_coverage_ratio, reason,
+                    {"n_usable": n_usable, "n_expiries": n_expiries,
+                     "expected_quotes": expected_quotes})
+
+
+def check_put_call_parity(iv_points_df: pd.DataFrame, underlying_symbol: str,
+                          rate: float, max_residual_pct: float = 0.02,
+                          american: bool = False) -> QcResult:
+    """
+    Résidu de parité put-call (roadmap : 'parity residual') : pour chaque
+    (expiry, strike) ayant call ET put, (C − P) doit valoir (F − K)·exp(−rT) ;
+    résidu normalisé par le spot. NB : pour les options AMÉRICAINES la parité est
+    une inégalité (exercice anticipé) → tolérance ×3 et statut plafonné à 'warn'.
+    """
+    df = iv_points_df[iv_points_df["underlying_symbol"] == underlying_symbol]
+    if "is_usable" in df.columns:
+        df = df[df["is_usable"]]
+    residuals = []
+    for (_expiry, strike), grp in df.groupby(["expiry", "strike"]):
+        rights = grp["right"].astype(str).str.upper().str[0]
+        calls, puts = grp[rights == "C"], grp[rights == "P"]
+        if calls.empty or puts.empty:
+            continue
+        c, p = calls["mid_price"].iloc[0], puts["mid_price"].iloc[0]
+        F, T = calls["forward"].iloc[0], calls["maturity_years"].iloc[0]
+        spot = calls["reference_spot"].iloc[0]
+        if not all(pd.notna(v) for v in (c, p, F, T, spot)) or spot <= 0:
+            continue
+        theo = (F - float(strike)) * math.exp(-rate * T)
+        residuals.append(abs((c - p) - theo) / spot)
+    if not residuals:
+        return QcResult("put_call_parity", underlying_symbol, "warn", "warning",
+                        float("nan"), max_residual_pct, "no_call_put_pairs", {})
+    median_res, max_res = float(np.median(residuals)), float(np.max(residuals))
+    threshold = max_residual_pct * (3.0 if american else 1.0)
+    status = "pass" if median_res <= threshold else "warn"
+    return QcResult("put_call_parity", underlying_symbol, status,
+                    "info" if status == "pass" else "warning",
+                    round(median_res, 5), round(threshold, 5),
+                    "ok" if status == "pass" else "parity_residual_high",
+                    {"median_residual": round(median_res, 5),
+                     "max_residual": round(max_res, 5),
+                     "n_pairs": len(residuals), "american": american})
+
+
+def check_greeks_reconciliation(recon_summary: dict, underlying_symbol: str,
+                                 max_delta_diff: float = 0.02,
+                                 max_vega_diff: float = 0.05) -> QcResult:
+    """
+    Réconciliation des greeks (roadmap Step 11) : l'écart médian de delta ET vega entre
+    greeks publiés et différences finies doit rester faible. gamma/theta sont informatifs
+    (gamma bruité par bump sur l'arbre CRR ; theta = écart de convention forward/spot).
+    """
+    if not recon_summary:
+        return QcResult("greeks_reconciliation", underlying_symbol, "warn", "warning",
+                        float("nan"), max_delta_diff, "no_reconciliation", {})
+    d = recon_summary.get("delta", {}).get("median", float("nan"))
+    v = recon_summary.get("vega", {}).get("median", float("nan"))
+    ok = (not math.isnan(d) and d <= max_delta_diff) and (not math.isnan(v) and v <= max_vega_diff)
+    status = "pass" if ok else "warn"
+    return QcResult("greeks_reconciliation", underlying_symbol, status,
+                    "info" if ok else "warning",
+                    round(d, 6) if not math.isnan(d) else float("nan"), max_delta_diff,
+                    "ok" if ok else "greeks_diff_high",
+                    {"delta_median": d, "vega_median": v,
+                     "gamma_median": recon_summary.get("gamma", {}).get("median"),
+                     "theta_median": recon_summary.get("theta", {}).get("median")})
+
+
+def check_carry_consistency(forward_df: pd.DataFrame, underlying_symbol: str,
+                            min_carry: float = -0.10,
+                            max_carry: float = 0.10) -> QcResult:
+    """
+    Roadmap Step 6 : le carry implicite (q = dividende − repo, annualisé) doit rester
+    dans des bornes économiquement plausibles. Hors bornes = forward suspect (quotes
+    asymétriques, parité contaminée) → warn carry_out_of_bounds.
+    """
+    df = forward_df
+    col = "underlying" if "underlying" in df.columns else "underlying_symbol"
+    if col in df.columns:
+        df = df[df[col] == underlying_symbol]
+    carries = pd.to_numeric(df.get("implied_carry"), errors="coerce").dropna() \
+        if "implied_carry" in df.columns else pd.Series(dtype=float)
+    if carries.empty:
+        return QcResult("carry_consistency", underlying_symbol, "warn", "warning",
+                        float("nan"), max_carry, "no_carry_estimates", {})
+    worst = float(carries.abs().max())
+    in_bounds = carries.between(min_carry, max_carry)
+    n_out = int((~in_bounds).sum())
+    status = "pass" if n_out == 0 else "warn"
+    return QcResult("carry_consistency", underlying_symbol, status,
+                    "info" if status == "pass" else "warning",
+                    round(worst, 5), round(max_carry, 5),
+                    "ok" if status == "pass" else "carry_out_of_bounds",
+                    {"n_maturities": len(carries), "n_out_of_bounds": n_out,
+                     "carry_median": round(float(carries.median()), 5),
+                     "bounds": [min_carry, max_carry]})
+
+
+def check_broker_greeks_reconciliation(iv_points_df: pd.DataFrame,
+                                       underlying_symbol: str,
+                                       max_delta_diff: float = 0.08,
+                                       max_vega_diff: float = 0.20,
+                                       min_points: int = 5) -> QcResult:
+    """
+    Roadmap Step 11 : « reconcile against broker-returned Greeks if available ».
+    Compare les greeks RECALCULÉS par la plateforme (depuis l'IV résolue) aux greeks
+    PUBLIÉS par le broker (snapshot 7308-7311), sur les options usable où les deux
+    existent. Verdict sur le delta (convention universelle) ; vega informatif
+    (conventions broker variables). Greeks broker absents → 'skip' (pas un échec :
+    IBKR ne les renvoie pas toujours en différé).
+    """
+    df = iv_points_df[iv_points_df["underlying_symbol"] == underlying_symbol]
+    if "is_usable" in df.columns:
+        df = df[df["is_usable"]]
+    need = {"delta", "broker_delta"}
+    if not need.issubset(df.columns):
+        return QcResult("broker_greeks_reconciliation", underlying_symbol, "skip",
+                        "info", float("nan"), max_delta_diff,
+                        "broker_greeks_not_captured", {})
+    both = df.dropna(subset=["delta", "broker_delta"])
+    if len(both) < min_points:
+        return QcResult("broker_greeks_reconciliation", underlying_symbol, "skip",
+                        "info", float("nan"), max_delta_diff,
+                        "insufficient_broker_greeks", {"n_points": len(both)})
+    d_diff = (pd.to_numeric(both["delta"], errors="coerce")
+              - pd.to_numeric(both["broker_delta"], errors="coerce")).abs()
+    med_delta = float(d_diff.median())
+    ctx = {"n_points": len(both), "delta_diff_median": round(med_delta, 5),
+           "delta_diff_max": round(float(d_diff.max()), 5)}
+    if {"vega", "broker_vega"}.issubset(both.columns):
+        v = both.dropna(subset=["vega", "broker_vega"])
+        if not v.empty:
+            ctx["vega_diff_median"] = round(float(
+                (v["vega"] - v["broker_vega"]).abs().median()), 5)
+    status = "pass" if med_delta <= max_delta_diff else "warn"
+    return QcResult("broker_greeks_reconciliation", underlying_symbol, status,
+                    "info" if status == "pass" else "warning",
+                    round(med_delta, 5), round(max_delta_diff, 5),
+                    "ok" if status == "pass" else "broker_delta_mismatch", ctx)
 
 
 def check_scenario_completeness(scenario_reports: list,

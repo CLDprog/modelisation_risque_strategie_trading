@@ -38,13 +38,19 @@ class ParquetStore:
         return p
 
     def write(self, table: str, df: pd.DataFrame, dt: date,
-              filename: str = "data.parquet", atomic: bool = False) -> Path:
+              filename: str = "data.parquet", atomic: bool = False,
+              version: Optional[str] = None) -> Path:
         """
         Write (or overwrite) a partition.
 
         atomic=True : écrit dans un fichier temporaire puis le renomme (os.replace,
         atomique sur le même FS). Indispensable quand un lecteur (le front Dash) peut
         lire le fichier pendant que le collecteur l'écrit.
+
+        version : identifiant de run (ex. run_id). Si fourni, une COPIE versionnée est
+        conservée dans `<partition>/versions/<version>.parquet` — `data.parquet` reste
+        le dernier état (lu par le front), mais chaque cycle/replay reste auditable au
+        lieu d'être écrasé (écart roadmap « versioning des analytics »).
         """
         if df.empty:
             logger.warning(f"Attempted to write empty DataFrame to {table}/{dt}")
@@ -57,8 +63,28 @@ class ParquetStore:
             os.replace(tmp, path)
         else:
             df.to_parquet(path, index=False, engine="pyarrow")
+        if version:
+            vdir = path.parent / "versions"
+            vdir.mkdir(exist_ok=True)
+            safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(version))
+            df.to_parquet(vdir / f"{safe}.parquet", index=False, engine="pyarrow")
         logger.debug(f"Wrote {len(df)} rows → {path}")
         return path
+
+    def list_versions(self, table: str, dt: date) -> list[str]:
+        """Versions conservées pour une partition (ids de run, triés)."""
+        vdir = self.base_dir / table / f"dt={dt.isoformat()}" / "versions"
+        if not vdir.exists():
+            return []
+        return sorted(p.stem for p in vdir.glob("*.parquet"))
+
+    def read_version(self, table: str, dt: date, version: str) -> pd.DataFrame:
+        """Relit la sortie d'un run précis (audit / replay comparé)."""
+        path = self.base_dir / table / f"dt={dt.isoformat()}" / "versions" / f"{version}.parquet"
+        if not path.exists():
+            logger.warning(f"Version not found: {table}/{dt}/{version}")
+            return pd.DataFrame()
+        return pd.read_parquet(path)
 
     def append(self, table: str, df: pd.DataFrame, dt: date) -> None:
         """Append rows to an existing partition (used by live collector)."""

@@ -1,4 +1,4 @@
-"""Page 9 — Moteur de Scénarios, symbol-aware avec callbacks dynamiques."""
+﻿"""Page 9 — Moteur de Scénarios, symbol-aware avec callbacks dynamiques."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -64,9 +64,9 @@ layout = dbc.Container([
             style_cell={"textAlign": "center", "padding": "8px"},
             style_data_conditional=[
                 {"if": {"filter_query": "{scenario_pnl} < 0", "column_id": "scenario_pnl"},
-                 "color": "#f85149"},
+                 "color": "#cf222e"},
                 {"if": {"filter_query": "{scenario_pnl} >= 0", "column_id": "scenario_pnl"},
-                 "color": "#3fb950"},
+                 "color": "#1a7f37"},
             ],
             sort_action="native",
         )),
@@ -122,12 +122,12 @@ def refresh_scenarios(_, symbol):
     # Bar chart
     fig_bar = go.Figure(go.Bar(
         x=summary["description"], y=summary["scenario_pnl"],
-        marker_color=["#3fb950" if v >= 0 else "#f85149" for v in summary["scenario_pnl"]],
+        marker_color=["#1a7f37" if v >= 0 else "#cf222e" for v in summary["scenario_pnl"]],
         text=[f"${v:,.0f}" for v in summary["scenario_pnl"]],
         textposition="outside",
     ))
     fig_bar.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=40, r=20, t=20, b=120),
         xaxis=dict(tickangle=-30), yaxis_title="PnL ($)", height=380,
     )
@@ -145,12 +145,12 @@ def refresh_scenarios(_, symbol):
                 colorscale="RdYlGn",
                 text=[[f"${v:,.0f}" for v in row] for row in pivot.values],
                 texttemplate="%{text}", textfont=dict(size=10),
-                colorbar=dict(title="PnL ($)", tickfont=dict(color="#e6edf3")),
+                colorbar=dict(title="PnL ($)", tickfont=dict(color="#1f2328")),
             ))
         except Exception:
             pass
     fig_heat.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=160, r=20, t=20, b=120),
         xaxis=dict(tickangle=-30), height=320,
     )

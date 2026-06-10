@@ -18,13 +18,14 @@ SYMBOL_DESC       = {u["symbol"]: u.get("description", u["symbol"])
 app = dash.Dash(
     __name__,
     use_pages=True,
-    external_stylesheets=[dbc.themes.DARKLY],
+    external_stylesheets=[dbc.themes.BOOTSTRAP],   # thème CLAIR — habillage dans assets/style.css
     suppress_callback_exceptions=True,
     title="Vol Risk Infrastructure",
 )
 
 PAGES = [
-    {"name": "Collecteur",             "href": "/"},
+    {"name": "Vue d'ensemble",         "href": "/"},
+    {"name": "Collecteur",             "href": "/collecteur"},
     {"name": "Instrument Master",      "href": "/universe"},
     {"name": "Market Data",            "href": "/market-data"},
     {"name": "Forward & Carry",        "href": "/forward"},
@@ -38,9 +39,9 @@ PAGES = [
 
 sidebar = html.Div([
     html.Div([
-        html.H5("Vol Risk", className="text-white fw-bold mb-0"),
-        html.Small("Infrastructure · v2.0", className="text-muted"),
-    ], className="mb-3 pb-2 border-bottom border-secondary"),
+        html.H5("Vol Risk", className="fw-bold mb-0"),
+        html.Small("Infrastructure · EURO STOXX 50", className="text-muted"),
+    ], className="mb-3 pb-2 border-bottom"),
 
     # ── Sélecteur de produit ──────────────────────────────────────────
     html.P("PRODUIT ACTIF", className="nav-title"),
@@ -50,13 +51,10 @@ sidebar = html.Div([
                  for sym in SUPPORTED_SYMBOLS],
         value=SUPPORTED_SYMBOLS[0] if SUPPORTED_SYMBOLS else "SPY",
         clearable=False,
-        searchable=False,
+        searchable=True,   # 51 valeurs — la recherche clavier est indispensable
         style={
-            "backgroundColor": "#21262d",
-            "color":           "#e6edf3",
-            "border":          "1px solid #30363d",
-            "borderRadius":    "6px",
-            "fontSize":        "13px",
+            "borderRadius": "4px",
+            "fontSize":     "13px",
         },
         className="mb-1",
     ),
@@ -118,7 +116,7 @@ def update_spot_info(symbol, _):
     spot = datasource.get_spot(sym)
     if spot:
         return html.Div(
-            html.Small(f"Spot : ${spot:.2f}", className="text-info d-block"),
+            html.Small(f"Spot : {spot:,.2f} €", className="text-info d-block"),
             className="px-1")
     return html.Div(
         html.Small("Démarrez le collecteur", className="text-muted d-block"),

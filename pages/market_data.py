@@ -1,4 +1,4 @@
-"""Page 3 — Market Data snapshots, dynamique et symbol-aware."""
+﻿"""Page 3 — Market Data snapshots, dynamique et symbol-aware."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -28,7 +28,7 @@ layout = dbc.Container([
         dbc.Col([
             html.Label("Maturité :", className="text-muted small"),
             dcc.Dropdown(id="md-dd-expiry", clearable=False,
-                         style={"backgroundColor": "#21262d", "color": "#e6edf3"}),
+                         style={"backgroundColor": "#ffffff", "color": "#1f2328"}),
         ], width=3),
         dbc.Col([
             html.Label("Type de quote :", className="text-muted small"),
@@ -40,7 +40,7 @@ layout = dbc.Container([
                     {"label": "Puts seulement",  "value": "P"},
                 ],
                 value="both", clearable=False,
-                style={"backgroundColor": "#21262d", "color": "#e6edf3"},
+                style={"backgroundColor": "#ffffff", "color": "#1f2328"},
             ),
         ], width=3),
     ], className="mb-3"),
@@ -66,11 +66,12 @@ layout = dbc.Container([
                 {"name": "Source",        "id": "data_source"},
             ],
             sort_action="native", filter_action="native", page_size=15,
+            style_header={"textTransform": "none"},
             style_table={"overflowX": "auto"},
             style_cell={"textAlign": "center", "padding": "7px"},
             style_data_conditional=[
                 {"if": {"filter_query": "{is_usable} = false", "column_id": "is_usable"},
-                 "color": "#f85149"},
+                 "color": "#cf222e"},
             ],
         )),
     ], className="card"),
@@ -139,7 +140,7 @@ def update_md_chart(expiry, right_filter, symbol, _):
         df = df[df["right"] == right_filter]
 
     fig = go.Figure()
-    for right, color, name in [("C", "#58a6ff", "Calls"), ("P", "#f78166", "Puts")]:
+    for right, color, name in [("C", "#0969da", "Calls"), ("P", "#bc4c00", "Puts")]:
         sub = df[df["right"] == right]
         if sub.empty:
             continue
@@ -148,10 +149,10 @@ def update_md_chart(expiry, right_filter, symbol, _):
             name=name, line=dict(color=color), marker=dict(size=5),
         ))
     if spot is not None:
-        fig.add_vline(x=spot, line_dash="dash", line_color="#8b949e",
+        fig.add_vline(x=spot, line_dash="dash", line_color="#57606a",
                       annotation_text=f"Spot {spot:.2f}")
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=40, r=20, t=30, b=40),
         xaxis_title="Strike", yaxis_title="Prix mid ($)",
     )

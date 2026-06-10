@@ -1,50 +1,97 @@
+/* ════════════════════════════════════════════════════════════════════
+   Thème CLAIR institutionnel — dense, sobre, type desk/risk report.
+   Palette : fond #f6f8fa · panneaux blancs · texte #1f2328 / #57606a ·
+   accents GitHub-light (bleu #0969da, vert #1a7f37, rouge #cf222e, ambre #9a6700)
+   ════════════════════════════════════════════════════════════════════ */
+
 /* ── Global ── */
-body { background-color: #0d1117; color: #e6edf3; font-family: 'Inter', sans-serif; }
+body { background-color: #f6f8fa; color: #1f2328;
+       font-family: 'Segoe UI', 'Inter', -apple-system, sans-serif; font-size: 13px; }
+
+/* Densité GLOBALE : on resserre les utilitaires Bootstrap utilisés par les pages
+   (marges, gouttières, padding du conteneur) sans toucher au code des pages. */
+.p-4 { padding: 0.9rem 1.1rem !important; }
+.mb-4 { margin-bottom: 0.7rem !important; }
+.mb-3 { margin-bottom: 0.55rem !important; }
+.mt-4 { margin-top: 0.7rem !important; }
+.g-3 { --bs-gutter-x: 0.55rem; --bs-gutter-y: 0.55rem; }
 
 /* ── Sidebar / Nav ── */
-.sidebar { background-color: #161b22; border-right: 1px solid #30363d; min-height: 100vh; padding: 1.5rem 1rem; }
-.nav-link { color: #8b949e !important; border-radius: 6px; margin-bottom: 4px; font-size: 0.9rem; }
-.nav-link:hover, .nav-link.active { background-color: #21262d !important; color: #e6edf3 !important; }
-.nav-title { color: #8b949e; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin: 1rem 0 0.5rem 0.5rem; }
+.sidebar { background-color: #ffffff; border-right: 1px solid #d0d7de;
+           min-height: 100vh; padding: 0.9rem 0.75rem; }
+.sidebar h5 { color: #1f2328 !important; font-size: 1rem; }
+.nav-link { color: #57606a !important; border-radius: 4px; margin-bottom: 1px;
+            font-size: 0.82rem; padding: 0.3rem 0.6rem; }
+.nav-link:hover { background-color: #f3f4f6 !important; color: #1f2328 !important; }
+.nav-link.active { background-color: #0969da !important; color: #ffffff !important; font-weight: 600; }
+.nav-title { color: #6e7781; font-size: 0.68rem; text-transform: uppercase;
+             letter-spacing: 1px; margin: 0.7rem 0 0.3rem 0.4rem; font-weight: 600; }
 
 /* ── Cards ── */
-.card { background-color: #161b22 !important; border: 1px solid #30363d !important; border-radius: 10px; }
-.card-header { background-color: #21262d !important; border-bottom: 1px solid #30363d !important; font-weight: 600; color: #e6edf3; }
+.card { background-color: #ffffff !important; border: 1px solid #d0d7de !important;
+        border-radius: 6px; box-shadow: 0 1px 2px rgba(31,35,40,0.04); }
+.card-header { background-color: #f6f8fa !important; border-bottom: 1px solid #d0d7de !important;
+               font-weight: 600; color: #1f2328; font-size: 0.82rem;
+               text-transform: uppercase; letter-spacing: 0.4px; padding: 0.45rem 0.8rem; }
+.card-body { padding: 0.7rem 0.8rem; }
 
-/* ── Metric boxes ── */
-.metric-box { background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; text-align: center; }
-.metric-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
-.metric-label { font-size: 0.78rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-.metric-box.positive .metric-value { color: #3fb950; }
-.metric-box.negative .metric-value { color: #f85149; }
-.metric-box.warning  .metric-value { color: #d29922; }
+/* ── Metric boxes : bandeau de stats compact, aligné à gauche, filet d'accent ── */
+.metric-box { background: #ffffff; border: 1px solid #d0d7de; border-left: 3px solid #0969da;
+              border-radius: 4px; padding: 0.45rem 0.7rem; text-align: left; height: 100%; }
+.metric-value { font-size: 1.15rem; font-weight: 700; color: #0a3069;
+                font-variant-numeric: tabular-nums; line-height: 1.25; }
+.metric-label { font-size: 0.64rem; color: #6e7781; text-transform: uppercase;
+                letter-spacing: 0.6px; margin-top: 1px; font-weight: 600; }
+.metric-box.positive { border-left-color: #1a7f37; }
+.metric-box.positive .metric-value { color: #1a7f37; }
+.metric-box.negative { border-left-color: #cf222e; }
+.metric-box.negative .metric-value { color: #cf222e; }
+.metric-box.warning  { border-left-color: #9a6700; }
+.metric-box.warning  .metric-value { color: #9a6700; }
+.metric-box.info     { border-left-color: #57606a; }
 
 /* ── Status indicators ── */
-.status-connected    { color: #3fb950; font-weight: 600; }
-.status-disconnected { color: #f85149; font-weight: 600; }
-.status-warning      { color: #d29922; font-weight: 600; }
+.status-connected    { color: #1a7f37; font-weight: 600; }
+.status-disconnected { color: #cf222e; font-weight: 600; }
+.status-warning      { color: #9a6700; font-weight: 600; }
 
 /* ── Formula box ── */
-.formula-box { background: #0d1117; border: 1px solid #30363d; border-left: 3px solid #58a6ff; border-radius: 6px; padding: 1rem 1.5rem; margin: 0.5rem 0; }
+.formula-box { background: #f6f8fa; border: 1px solid #d0d7de; border-left: 3px solid #0969da;
+               border-radius: 4px; padding: 0.4rem 0.9rem; margin: 0.25rem 0;
+               color: #1f2328; }
 
-/* ── Tables ── */
-.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th { background-color: #21262d !important; color: #8b949e !important; font-size: 0.78rem; text-transform: uppercase; border-color: #30363d !important; }
-.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner td { background-color: #161b22 !important; color: #e6edf3 !important; border-color: #30363d !important; font-size: 0.88rem; }
-.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner tr:hover td { background-color: #21262d !important; }
+/* ── Tables Dash : denses, type rapport de risque ── */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th {
+    background-color: #f6f8fa !important; color: #57606a !important;
+    font-size: 0.7rem; border-color: #d0d7de !important;
+    font-weight: 600; padding: 3px 8px !important; }
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner td {
+    background-color: #ffffff !important; color: #1f2328 !important;
+    border-color: #e6e9ed !important; font-size: 0.78rem;
+    padding: 3px 8px !important; font-variant-numeric: tabular-nums; }
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner tr:hover td {
+    background-color: #f3f6fb !important; }
 
 /* ── Section title ── */
-.section-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-bottom: 0.75rem; margin-top: 1.5rem; }
+.section-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px;
+                 color: #57606a; margin-bottom: 0.4rem; margin-top: 0.9rem; font-weight: 700;
+                 border-bottom: 1px solid #d0d7de; padding-bottom: 0.25rem; }
 
-/* ── Inputs ── */
-.dash-input { background-color: #21262d !important; border: 1px solid #30363d !important; color: #e6edf3 !important; border-radius: 6px; }
-.Select-control { background-color: #21262d !important; border-color: #30363d !important; }
+/* ── Inputs / dropdowns ── */
+.dash-input { background-color: #ffffff !important; border: 1px solid #d0d7de !important;
+              color: #1f2328 !important; border-radius: 4px; font-size: 0.85rem; }
+.Select-control, .Select-menu-outer { background-color: #ffffff !important;
+              border-color: #d0d7de !important; color: #1f2328 !important; }
 
 /* ── Buttons ── */
-.btn-primary { background-color: #238636 !important; border-color: #238636 !important; }
-.btn-primary:hover { background-color: #2ea043 !important; }
-.btn-danger  { background-color: #da3633 !important; border-color: #da3633 !important; }
+.btn-primary { background-color: #0969da !important; border-color: #0969da !important; }
+.btn-primary:hover { background-color: #0a5bd3 !important; }
+.btn-danger  { background-color: #cf222e !important; border-color: #cf222e !important; }
 
-/* ── Page header ── */
-.page-header { border-bottom: 1px solid #30363d; padding-bottom: 1rem; margin-bottom: 1.5rem; }
-.page-header h2 { font-size: 1.4rem; font-weight: 600; color: #e6edf3; }
-.page-header p { color: #8b949e; font-size: 0.9rem; margin: 0; }
+/* ── Page header : compact ── */
+.page-header { border-bottom: 2px solid #d0d7de; padding-bottom: 0.4rem; margin-bottom: 0.8rem; }
+.page-header h2 { font-size: 1.15rem; font-weight: 700; color: #1f2328; margin-bottom: 0.15rem; }
+.page-header p { color: #57606a; font-size: 0.8rem; margin: 0; }
+
+/* ── Alertes plus discrètes ── */
+.alert { padding: 0.45rem 0.8rem; font-size: 0.82rem; border-radius: 4px; }

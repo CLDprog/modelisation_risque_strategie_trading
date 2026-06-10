@@ -99,3 +99,58 @@ def price_american_binomial(spot: float, strike: float, sigma: float,
         forward=fwd, strike=strike, sigma=sigma, maturity_years=maturity,
         rate=rate, right=right, price=float(values[0]), steps=steps,
     )
+
+
+def greeks_american(spot: float, strike: float, sigma: float, maturity: float,
+                    rate: float, carry: float, right: str,
+                    steps: int = 200) -> tuple:
+    """
+    Greeks d'une option AMÉRICAINE depuis l'arbre binomial CRR.
+
+    delta / gamma / theta sont lus directement sur les nœuds internes de l'arbre
+    (méthode standard de Hull) — bien plus stable que des différences finies par
+    bump, polluées par le "sawtooth" de discrétisation de l'arbre. vega est obtenu
+    par re-pricing (bump de vol). Conventions alignées sur Black-76 : vega PAR POINT
+    de vol (×0.01), theta PAR JOUR calendaire. Renvoie (delta, gamma, vega, theta).
+    """
+    if maturity <= 0 or sigma <= 0 or spot <= 0 or steps < 2:
+        return 0.0, 0.0, 0.0, 0.0
+
+    N = steps
+    dt = maturity / N
+    disc = math.exp(-rate * dt)
+    u = math.exp(sigma * math.sqrt(dt))
+    d = 1.0 / u
+    p_up = (math.exp((rate - carry) * dt) - d) / (u - d)
+    p_up = max(0.0, min(1.0, p_up))
+    p_dn = 1.0 - p_up
+    r_char = right.upper()[0]
+
+    j = np.arange(N + 1)
+    stock = spot * (u ** j) * (d ** (N - j))
+    values = (np.maximum(stock - strike, 0.0) if r_char == "C"
+              else np.maximum(strike - stock, 0.0))
+
+    nodes = {}  # step ∈ {0,1,2} -> (values, stock_prices)
+    for step in range(N - 1, -1, -1):
+        stock_now = spot * (u ** np.arange(step + 1)) * (d ** (step - np.arange(step + 1)))
+        cont = disc * (p_up * values[1:step + 2] + p_dn * values[0:step + 1])
+        intr = (np.maximum(stock_now - strike, 0.0) if r_char == "C"
+                else np.maximum(strike - stock_now, 0.0))
+        values = np.maximum(cont, intr)
+        if step <= 2:
+            nodes[step] = (values.copy(), stock_now.copy())
+
+    (v0, _), (v1, s1), (v2, s2) = nodes[0], nodes[1], nodes[2]
+    delta = (v1[1] - v1[0]) / (s1[1] - s1[0])
+    h_up = (v2[2] - v2[1]) / (s2[2] - s2[1])
+    h_dn = (v2[1] - v2[0]) / (s2[1] - s2[0])
+    gamma = (h_up - h_dn) / (0.5 * (s2[2] - s2[0]))
+    theta = ((v2[1] - v0[0]) / (2.0 * dt)) / 365.0   # par jour calendaire
+
+    dv = 0.01  # vega par 1 point de vol
+    p_vu = price_american_binomial(spot, strike, sigma + dv, maturity, rate, carry, right, N).price
+    p_vd = price_american_binomial(spot, strike, sigma - dv, maturity, rate, carry, right, N).price
+    vega = (p_vu - p_vd) / 2.0
+
+    return float(delta), float(gamma), float(vega), float(theta)

@@ -204,14 +204,61 @@ class DataSource:
             df = df[df["underlying_symbol"] == sym].copy()
         return df
 
-    def get_portfolio(self, symbol: Optional[str] = None) -> pd.DataFrame:
+    def _read_for_symbol(self, table: str, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Lit une table analytics et filtre sur le sous-jacent (colonne
+        `underlying_symbol` ou `underlying` selon la table)."""
         sym = (symbol or self._selected_symbol).upper()
-        df = self._read_analytics("risk_aggregates")
+        df = self._read_analytics(table)
         if df.empty:
             return pd.DataFrame()
-        if "underlying_symbol" in df.columns:
-            df = df[df["underlying_symbol"] == sym].copy()
-        return df
+        for col in ("underlying_symbol", "underlying"):
+            if col in df.columns:
+                return df[df[col] == sym].copy()
+        return df.copy()
+
+    def get_portfolio(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Agrégats de risque par bucket [portfolio_id, underlying_symbol] (somme des €-greeks)."""
+        return self._read_for_symbol("risk_aggregates", symbol)
+
+    def get_position_risk(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Détail de risque ligne-à-ligne par position (vide sans positions au compte)."""
+        return self._read_for_symbol("position_risk", symbol)
+
+    def get_surface_parameters(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Paramètres SVI calibrés par tranche de maturité (a, b, rho, m, sigma, rmse)."""
+        return self._read_for_symbol("surface_parameters", symbol)
+
+    def get_forward_diagnostics(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Candidats forward par strike (y compris rejetés outlier/illiquide)."""
+        return self._read_for_symbol("forward_diagnostics", symbol)
+
+    def get_iv_diagnostics(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Diagnostics du solveur IV (convergence, résidu, raison d'échec) — toutes options."""
+        return self._read_for_symbol("iv_diagnostics", symbol)
+
+    def get_greeks_reconciliation(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Réconciliation greeks publiés vs différences finies (échantillon par sous-jacent)."""
+        return self._read_for_symbol("greeks_reconciliation", symbol)
+
+    def get_market_snapshots(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Snapshots de marché normalisés (bid/ask/mid, is_usable, reject_reason)."""
+        return self._read_for_symbol("market_state_snapshots", symbol)
+
+    def get_pricing_results(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Round-trip du moteur de pricing : prix modèle (à l'IV résolue) vs mid marché."""
+        return self._read_for_symbol("pricing_results", symbol)
+
+    def get_positions(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """État brut du portefeuille paper (table positions)."""
+        return self._read_for_symbol("positions", symbol)
+
+    def get_surface_interpolated(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Surface interpolée aux tenors cibles exacts (Eq.22, variance totale)."""
+        return self._read_for_symbol("surface_interpolated", symbol)
+
+    def get_dispersion(self) -> pd.DataFrame:
+        """Diagnostics de dispersion indice vs composantes (Eq.23, corrélation implicite)."""
+        return self._read_analytics("dispersion_diagnostics")
 
     def get_scenarios(self, symbol: Optional[str] = None) -> pd.DataFrame:
         sym = (symbol or self._selected_symbol).upper()
@@ -229,8 +276,8 @@ class DataSource:
             return pd.DataFrame()
         cols = ["check_name", "target_key", "status", "severity",
                 "measured_value", "threshold", "reason_code"]
-        mask = df["target_key"].str.contains(sym, case=False, na=False)
-        df_sym = df[mask | (df["target_key"] == "portfolio")]
+        # Égalité stricte : `contains` matchait les symboles courts (AI→AIR, EL→ENEL…)
+        df_sym = df[(df["target_key"] == sym) | (df["target_key"] == "portfolio")]
         if df_sym.empty:
             return pd.DataFrame()
         return df_sym[[c for c in cols if c in df_sym.columns]].copy()
@@ -242,9 +289,56 @@ class DataSource:
         if df.empty:
             return pd.DataFrame()
         if "target_key" in df.columns:
-            mask = df["target_key"].str.contains(sym, case=False, na=False)
-            df = df[mask | (df["target_key"] == "portfolio")]
+            df = df[(df["target_key"] == sym) | (df["target_key"] == "portfolio")]
         return df.copy()
+
+    def get_universe_overview(self) -> pd.DataFrame:
+        """Une ligne par sous-jacent de l'univers : collecte, spot, volumétrie, QC.
+
+        Croise configs/universe.yaml, collector_status.json et les tables du jour
+        (iv_points, forward_curve, qc_results). Sert à la page Vue d'ensemble."""
+        underlyings = self._get_universe_cfg().get("underlyings", [])
+        opt_default = self._get_universe_cfg().get("options", {}).get("exchange", "EUREX")
+        status_syms = self.collector_status().get("symbols", {})
+        iv = self._read_analytics("iv_points")
+        fwd = self._read_analytics("forward_curve")
+        qc = self._read_analytics("qc_results")
+
+        fwd_col = "underlying" if "underlying" in fwd.columns else "underlying_symbol"
+        rows = []
+        for u in underlyings:
+            sym = u["symbol"]
+            sd = status_syms.get(sym, {})
+            row = {
+                "symbol": sym,
+                "description": u.get("description", ""),
+                "sec_type": u.get("sec_type", "STK"),
+                "exchange": u.get("exchange", ""),
+                "option_exchange": u.get("option_exchange", opt_default),
+                "spot": sd.get("spot"),
+                "n_quotes": int(sd.get("n_quotes") or 0),
+                "n_usable": int(sd.get("n_usable") or 0),
+                "updated": sd.get("updated"),
+                "n_options": 0, "n_expiries": 0, "iv_mean": None,
+                "n_forwards": 0, "qc_warn": 0, "qc_fail": 0,
+            }
+            if not iv.empty and "underlying_symbol" in iv.columns:
+                sub = iv[iv["underlying_symbol"] == sym]
+                row["n_options"] = len(sub)
+                if "expiry" in sub.columns:
+                    row["n_expiries"] = int(sub["expiry"].nunique())
+                if "implied_vol" in sub.columns:
+                    ivs = pd.to_numeric(sub["implied_vol"], errors="coerce").dropna()
+                    row["iv_mean"] = float(ivs.mean()) if len(ivs) else None
+            if not fwd.empty and fwd_col in fwd.columns:
+                row["n_forwards"] = int((fwd[fwd_col] == sym).sum())
+            if not qc.empty and "target_key" in qc.columns:
+                sub = qc[qc["target_key"] == sym]
+                if "status" in sub.columns:
+                    row["qc_warn"] = int((sub["status"] == "warn").sum())
+                    row["qc_fail"] = int((sub["status"] == "fail").sum())
+            rows.append(row)
+        return pd.DataFrame(rows)
 
     def get_qc_anomalies(self, symbol: Optional[str] = None) -> pd.DataFrame:
         """Anomalies QC détectées vs baseline glissante (étape 14)."""
@@ -253,7 +347,7 @@ class DataSource:
         if df.empty:
             return pd.DataFrame()
         if "target_key" in df.columns:
-            df = df[df["target_key"].str.contains(sym, case=False, na=False)]
+            df = df[df["target_key"] == sym]
         return df.copy()
 
 

@@ -50,6 +50,33 @@ class ForwardResult:
     diagnostics_version: str = "v1.0"
 
 
+def forward_candidates_to_dataframe(forward_results) -> "pd.DataFrame":
+    """
+    Candidats forward individuels (dont rejetés 'outlier'/'illiquid') → table
+    `forward_diagnostics` (roadmap : diagnostics forward rejetés non persistés).
+    """
+    import pandas as pd
+    rows = []
+    for r in forward_results:
+        for c in r.candidates:
+            rows.append({
+                "underlying": r.underlying,
+                "snapshot_ts": r.snapshot_ts,
+                "expiry": r.expiry,
+                "maturity_years": r.maturity_years,
+                "strike": c.strike,
+                "call_mid": c.call_mid,
+                "put_mid": c.put_mid,
+                "forward_estimate": c.forward_estimate,
+                "weight": c.weight,
+                "quality_flag": c.quality_flag,           # ok | outlier | illiquid
+                "used": c.quality_flag == "ok",
+                "chosen_forward": r.chosen_forward,
+                "diagnostics_version": r.diagnostics_version,
+            })
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Pure calculation functions  (Equations 2, 4, 5 du roadmap)
 # ---------------------------------------------------------------------------

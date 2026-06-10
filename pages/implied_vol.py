@@ -1,4 +1,4 @@
-"""Page 5 — Volatilité Implicite, symbol-aware."""
+﻿"""Page 5 — Volatilité Implicite, symbol-aware."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -16,7 +16,7 @@ dash.register_page(__name__, path="/implied-vol", name="Volatilité Implicite")
 
 def _smile_fig(chain, expiry: str, symbol: str) -> go.Figure:
     fig = go.Figure()
-    for right, color, name in [("C", "#58a6ff", "IV Calls"), ("P", "#f78166", "IV Puts")]:
+    for right, color, name in [("C", "#0969da", "IV Calls"), ("P", "#bc4c00", "IV Puts")]:
         df = chain[(chain["expiry"] == expiry) & (chain["right"] == right)]
         fig.add_trace(go.Scatter(
             x=df["log_moneyness"], y=df["implied_vol"] * 100,
@@ -24,15 +24,15 @@ def _smile_fig(chain, expiry: str, symbol: str) -> go.Figure:
             line=dict(color=color, dash="solid" if right == "C" else "dash"),
             marker=dict(size=5),
         ))
-    fig.add_vline(x=0, line_dash="dot", line_color="#8b949e",
+    fig.add_vline(x=0, line_dash="dot", line_color="#57606a",
                   annotation_text="ATM (k=0)")
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=40, r=20, t=30, b=40),
         xaxis_title="Log-moneyness k = ln(K/F)",
         yaxis_title="Volatilité implicite (%)",
         legend=dict(bgcolor="rgba(0,0,0,0)"),
-        title=dict(text=f"Smile IV — {symbol}", font=dict(color="#8b949e", size=12)),
+        title=dict(text=f"Smile IV — {symbol}", font=dict(color="#57606a", size=12)),
     )
     return fig
 
@@ -71,24 +71,45 @@ layout = dbc.Container([
         ]),
     ], className="card mb-4"),
 
-    dbc.Card([
-        dbc.CardHeader("Smile de volatilité par maturité"),
-        dbc.CardBody([
-            dbc.Row([
-                dbc.Col([
-                    html.Label("Maturité :", className="text-muted small"),
-                    dcc.Dropdown(id="dd-expiry-iv", clearable=False,
-                                 style={"backgroundColor": "#21262d", "color": "#e6edf3"}),
-                ], width=4),
-            ], className="mb-3"),
-            dcc.Graph(id="graph-smile", config={"displayModeBar": False}),
-        ]),
-    ], className="card mb-4"),
+    # ── Vue d'ensemble : smiles superposés + term structure + skew ────
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Smiles superposés — toutes les maturités"),
+            dbc.CardBody(dcc.Graph(id="iv-smile-overlay", config={"displayModeBar": False}),
+                         className="p-2"),
+        ], className="card h-100"), width=7),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Term structure ATM (k ≈ 0)"),
+            dbc.CardBody(dcc.Graph(id="iv-term-structure", config={"displayModeBar": False}),
+                         className="p-2"),
+        ], className="card h-100"), width=5),
+    ], className="g-2 mb-3"),
+
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Skew — risk reversal & butterfly 30Δ par maturité"),
+            dbc.CardBody([
+                dcc.Graph(id="iv-skew-fig", config={"displayModeBar": False}),
+                html.Small("RR30 = IV(put 30Δ) − IV(call 30Δ) : prime de la protection à la "
+                           "baisse · BF30 = (IV(put 30Δ)+IV(call 30Δ))/2 − IV(ATM) : convexité "
+                           "des ailes.", className="text-muted"),
+            ], className="p-2"),
+        ], className="card h-100"), width=6),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Smile par maturité — calls vs puts"),
+            dbc.CardBody([
+                dcc.Dropdown(id="dd-expiry-iv", clearable=False,
+                             style={"fontSize": "12px"}, className="mb-2"),
+                dcc.Graph(id="graph-smile", config={"displayModeBar": False}),
+            ], className="p-2"),
+        ], className="card h-100"), width=6),
+    ], className="g-2 mb-3"),
 
     dbc.Card([
         dbc.CardHeader("Points IV détaillés"),
         dbc.CardBody(dash_table.DataTable(
             id="table-iv",
+            style_header={"textTransform": "none"},
             columns=[
                 {"name": "Expiry",          "id": "expiry"},
                 {"name": "Strike",          "id": "strike"},
@@ -104,6 +125,29 @@ layout = dbc.Container([
             style_cell={"textAlign": "center", "padding": "6px"},
             sort_action="native", filter_action="native", page_size=15,
         )),
+    ], className="card mb-4"),
+
+    dbc.Card([
+        dbc.CardHeader("Diagnostics du solveur (iv_diagnostics) — échecs de convergence"),
+        dbc.CardBody([
+            html.Div(id="iv-diag-summary", className="mb-2"),
+            dash_table.DataTable(
+                id="iv-diag-table",
+                columns=[
+                    {"name": "Expiry",   "id": "expiry"},
+                    {"name": "Strike",   "id": "strike"},
+                    {"name": "C/P",      "id": "right"},
+                    {"name": "Mid",      "id": "mid_price"},
+                    {"name": "Forward",  "id": "forward"},
+                    {"name": "IV",       "id": "implied_vol"},
+                    {"name": "Convergé", "id": "converged"},
+                    {"name": "Raison d'échec", "id": "failure_reason"},
+                ],
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "center", "padding": "6px", "fontSize": "13px"},
+                sort_action="native", page_size=10,
+            ),
+        ]),
     ], className="card"),
 ], fluid=True)
 
@@ -180,6 +224,126 @@ def update_smile(expiry, symbol, _):
     fig   = _smile_fig(chain, expiry, sym)
     data  = chain[chain["expiry"] == expiry].round(5).to_dict("records")
     return fig, data
+
+
+_TENOR_COLORS = ["#0a3069", "#0969da", "#218bff", "#54aeff", "#1a7f37", "#9a6700", "#bc4c00"]
+
+_BASE_LAYOUT = dict(template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                    font=dict(size=11))
+
+
+@callback(
+    Output("iv-smile-overlay",  "figure"),
+    Output("iv-term-structure", "figure"),
+    Output("iv-skew-fig",       "figure"),
+    Input("selected-symbol",    "data"),
+    Input("iv-interval",        "n_intervals"),
+)
+def refresh_iv_charts(symbol, _):
+    sym   = symbol or "ESTX50"
+    chain = datasource.get_option_chain(sym)
+    empty = go.Figure()
+    if chain.empty:
+        return empty, empty, empty
+    usable = chain[chain["is_usable"]] if "is_usable" in chain.columns else chain
+    usable = usable.dropna(subset=["implied_vol", "log_moneyness"])
+    expiries = sorted(usable["expiry"].unique())
+
+    # 1) Smiles superposés (calls + puts confondus, une trace par maturité)
+    fig_ov = go.Figure()
+    for i, e in enumerate(expiries):
+        d = usable[usable["expiry"] == e].sort_values("log_moneyness")
+        days = int(d["days_to_expiry"].iloc[0]) if "days_to_expiry" in d.columns else 0
+        fig_ov.add_trace(go.Scatter(
+            x=d["log_moneyness"], y=d["implied_vol"] * 100,
+            mode="lines+markers", name=f"{e} ({days}j)",
+            line=dict(color=_TENOR_COLORS[i % len(_TENOR_COLORS)], width=1.5),
+            marker=dict(size=4),
+        ))
+    fig_ov.add_vline(x=0, line_dash="dot", line_color="#57606a")
+    fig_ov.update_layout(height=330, margin=dict(l=45, r=10, t=8, b=40),
+                         xaxis_title="Log-moneyness k = ln(K/F)", yaxis_title="IV (%)",
+                         legend=dict(font=dict(size=9)), **_BASE_LAYOUT)
+
+    # 2) Term structure ATM : IV du strike au |k| minimal, par maturité
+    atm_rows = []
+    for e in expiries:
+        d = usable[usable["expiry"] == e]
+        if d.empty:
+            continue
+        row = d.loc[d["log_moneyness"].abs().idxmin()]
+        atm_rows.append((int(row.get("days_to_expiry", 0)), float(row["implied_vol"]) * 100))
+    fig_ts = go.Figure()
+    if atm_rows:
+        atm_rows.sort()
+        fig_ts.add_trace(go.Scatter(
+            x=[r[0] for r in atm_rows], y=[r[1] for r in atm_rows],
+            mode="lines+markers+text", text=[f"{r[1]:.1f}" for r in atm_rows],
+            textposition="top center", textfont=dict(size=9),
+            line=dict(color="#0969da", width=2), marker=dict(size=7),
+        ))
+    fig_ts.update_layout(height=330, margin=dict(l=45, r=15, t=8, b=40),
+                         xaxis_title="Jours à expiration", yaxis_title="IV ATM (%)",
+                         **_BASE_LAYOUT)
+
+    # 3) Skew RR30 / BF30 par maturité (sélection par delta de la grille ±30Δ)
+    skew_rows = []
+    if "delta" in usable.columns:
+        for e in expiries:
+            d = usable[usable["expiry"] == e].dropna(subset=["delta"])
+            if d.empty:
+                continue
+            p30 = d[(d["right"] == "P") & (d["delta"].between(-0.40, -0.20))]["implied_vol"]
+            c30 = d[(d["right"] == "C") & (d["delta"].between(0.20, 0.40))]["implied_vol"]
+            atm = d.loc[d["log_moneyness"].abs().idxmin(), "implied_vol"]
+            if p30.empty or c30.empty:
+                continue
+            rr = (p30.mean() - c30.mean()) * 100
+            bf = ((p30.mean() + c30.mean()) / 2 - atm) * 100
+            days = int(d["days_to_expiry"].iloc[0]) if "days_to_expiry" in d.columns else 0
+            skew_rows.append((days, rr, bf))
+    fig_sk = go.Figure()
+    if skew_rows:
+        skew_rows.sort()
+        x = [f"{r[0]}j" for r in skew_rows]
+        fig_sk.add_trace(go.Bar(x=x, y=[r[1] for r in skew_rows], name="RR30 (pts)",
+                                marker_color="#cf222e", opacity=0.8))
+        fig_sk.add_trace(go.Bar(x=x, y=[r[2] for r in skew_rows], name="BF30 (pts)",
+                                marker_color="#0969da", opacity=0.8))
+    fig_sk.update_layout(height=300, margin=dict(l=45, r=15, t=8, b=30), barmode="group",
+                         yaxis_title="Points de vol",
+                         legend=dict(orientation="h", y=1.12, font=dict(size=10)),
+                         **_BASE_LAYOUT)
+
+    return fig_ov, fig_ts, fig_sk
+
+
+@callback(
+    Output("iv-diag-summary", "children"),
+    Output("iv-diag-table",   "data"),
+    Input("selected-symbol",  "data"),
+    Input("iv-interval",      "n_intervals"),
+)
+def refresh_iv_diagnostics(symbol, _):
+    sym  = symbol or "ESTX50"
+    diag = datasource.get_iv_diagnostics(sym)
+    if diag.empty:
+        return html.Small("Table iv_diagnostics vide pour ce sous-jacent.",
+                          className="text-muted"), []
+
+    n_tot  = len(diag)
+    conv   = diag["converged"].astype(bool) if "converged" in diag.columns else None
+    n_fail = int((~conv).sum()) if conv is not None else 0
+    summary = [
+        dbc.Badge(f"{n_tot} options solvées", color="info", className="me-2"),
+        dbc.Badge(f"{n_tot - n_fail} convergées", color="success", className="me-2"),
+        dbc.Badge(f"{n_fail} échec(s)", color="danger" if n_fail else "secondary"),
+    ]
+    failures = diag[~conv] if conv is not None and n_fail else diag.iloc[0:0]
+    cols = ["expiry", "strike", "right", "mid_price", "forward",
+            "implied_vol", "converged", "failure_reason"]
+    data = failures[[c for c in cols if c in failures.columns]].round(4).to_dict("records")
+    return summary, data
 
 
 def _mb(value, label, css=""):

@@ -17,4 +17,5 @@ finite_difference:
 
 risk_free_rate:
   source: constant              # simplification pour le projet école
-  value: 0.053                  # ~5.3% (taux Fed funds approximatif)
+  value: 0.025                  # ~2.5% — taux court EUR (ESTR/ECB), univers EURO STOXX 50
+  currency: EUR

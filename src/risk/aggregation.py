@@ -130,35 +130,32 @@ def compute_position_risk(position: Position, iv_row: dict,
 # Portfolio aggregation
 # ---------------------------------------------------------------------------
 
+_AGG_COLS = [
+    "portfolio_delta", "portfolio_gamma", "portfolio_vega", "portfolio_theta",
+    "portfolio_dollar_gamma", "portfolio_dollar_vega", "pnl_approx",
+]
+
+
+def aggregate_risk_frame(risk_df: pd.DataFrame,
+                         group_by: str = "underlying_symbol") -> pd.DataFrame:
+    """
+    Vraie agrégation des Greeks monétisés (somme par bucket [portfolio_id, group_by])
+    à partir d'un DataFrame de risque ligne-à-ligne. Source UNIQUE d'agrégation, partagée
+    par le collecteur live et le pipeline EOD (≠ persister le ligne-à-ligne tel quel).
+    """
+    if risk_df is None or risk_df.empty:
+        return pd.DataFrame()
+    keys = [k for k in ("portfolio_id", group_by) if k in risk_df.columns]
+    cols = [c for c in _AGG_COLS if c in risk_df.columns]
+    if not keys or not cols:
+        return pd.DataFrame()
+    return risk_df.groupby(keys, as_index=False)[cols].sum()
+
+
 def aggregate_risk(position_risks: List[PositionRisk],
                    group_by: str = "underlying_symbol") -> pd.DataFrame:
-    """Aggregate monetized Greeks by the specified grouping key."""
-    if not position_risks:
-        return pd.DataFrame()
-
-    rows = []
-    for r in position_risks:
-        rows.append({
-            "portfolio_id": r.portfolio_id,
-            "underlying_symbol": r.underlying_symbol,
-            "expiry": r.expiry,
-            "portfolio_delta": r.portfolio_delta,
-            "portfolio_gamma": r.portfolio_gamma,
-            "portfolio_vega": r.portfolio_vega,
-            "portfolio_theta": r.portfolio_theta,
-            "portfolio_dollar_gamma": r.portfolio_dollar_gamma,
-            "portfolio_dollar_vega": r.portfolio_dollar_vega,
-            "pnl_approx": r.pnl_approx,
-            "valuation_ts": r.valuation_ts,
-        })
-
-    df = pd.DataFrame(rows)
-    agg_cols = [
-        "portfolio_delta", "portfolio_gamma", "portfolio_vega",
-        "portfolio_theta", "portfolio_dollar_gamma", "portfolio_dollar_vega",
-        "pnl_approx",
-    ]
-    return df.groupby(["portfolio_id", group_by])[agg_cols].sum().reset_index()
+    """Aggregate monetized Greeks by the grouping key (objets → DataFrame agrégé)."""
+    return aggregate_risk_frame(position_risk_to_dataframe(position_risks), group_by)
 
 
 def position_risk_to_dataframe(risks: List[PositionRisk]) -> pd.DataFrame:

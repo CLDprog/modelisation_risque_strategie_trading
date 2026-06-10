@@ -1,8 +1,14 @@
+# Seuils APPLIQUÉS par src/qc/quote_filters.py (librairie de checks nommés, version qf_v2).
+# Ce fichier est la SEULE source de vérité des seuils (plus de valeur en dur dans live.py).
 quote_filters:
-  max_spread_pct: 0.25          # rejeter si (ask-bid)/mid > 25%
-  max_quote_age_seconds: 60     # rejeter les quotes de plus de 60s
-  min_open_interest: 10         # ignorer les strikes sans intérêt ouvert
-  require_positive_bid: true    # rejeter si bid <= 0
+  max_spread_pct: 1.0           # rejeter si (ask-bid)/mid > 100% — ailes 10Δ EUREX larges ;
+                                # resserrer (ex. 0.25) durcit le filtre
+  min_open_interest: 0          # rejet si OI présent ET < seuil ('low_open_interest').
+                                # 0 = désactivé : l'OI EUREX est souvent absent/bas sur les
+                                # ailes ; relever à 10 pour un filtre de liquidité strict
+  require_positive_bid: true    # bid <= 0 → bascule sur last/close (tracé price_from_*)
+  # max_quote_age_seconds : NON MESURABLE via le snapshot REST (pas d'horodatage par quote)
+  # — documenté dans quote_filters.py, ne pas réintroduire silencieusement.
 
 forward_engine:
   strike_band_mode: nearest_liquid
@@ -27,3 +33,40 @@ surface:
 collector:
   max_gap_seconds: 30           # alerte si pas de data pendant > 30s
   min_coverage_ratio: 0.85
+
+coverage:                       # roadmap : 'option chain coverage'
+  min_coverage_ratio: 0.5       # part min de la grille cible (tenors×strikes×CP) en quotes usable
+
+parity:                         # roadmap : 'put-call parity residual'
+  max_residual_pct: 0.02        # |（C−P)−(F−K)e^(−rT)| / spot ; toléré ×3 pour les américaines
+
+reconciliation:                 # roadmap Step 11 : greeks publiés vs différences finies
+  max_delta_diff: 0.02          # écart médian delta toléré
+  max_vega_diff: 0.05           # écart médian vega toléré (gamma/theta = informatifs)
+
+broker_reconciliation:          # roadmap Step 11 : greeks plateforme vs greeks BROKER
+  max_delta_diff: 0.08          # écart médian |Δ plateforme − Δ broker| toléré (verdict)
+  max_vega_diff: 0.20           # informatif (conventions de vega broker variables)
+  min_points: 5                 # en-dessous : check 'skip' (pas assez de greeks broker reçus)
+
+carry:                          # roadmap Step 6 : le carry implicite comparé à une attente
+  min_carry: -0.10              # borne basse du carry implicite annualisé (q = div - repo)
+  max_carry: 0.10               # borne haute ; hors bornes → warn carry_out_of_bounds
+
+# Politique d'escalade S1–S4 (roadmap Step 14) — CODÉE dans run_collector._emit_alerts :
+# chaque alerte porte severity_level / owner / sla_minutes / due_by.
+escalation:
+  fail: { level: S1, owner: operator, sla_minutes: 60 }
+  warn: { level: S3, owner: operator, sla_minutes: 1440 }
+  disconnect: { level: S2, owner: operator, sla_minutes: 120 }
+
+# Routage d'alertes externe (roadmap Step 15) — codé dans src/qc/alert_router.py.
+# Désactivé tant que webhook_url/SMTP ne sont pas renseignés (les alertes restent
+# toujours écrites dans data/alerts.json).
+alerting:
+  webhook_url: ""               # ex. https://hooks.slack.com/services/…  (POST JSON)
+  smtp:
+    host: ""                    # ex. smtp.gmail.com (mot de passe via env VOL_SMTP_PASSWORD)
+    port: 587
+    sender: ""
+    recipients: []

@@ -9,13 +9,10 @@ __pycache__/
 *.tmp
 *.log
 
-# Data files and runtime artifacts
-data/alerts.json
-data/collector_status.json
-data/metadata.db
-data/analytics/
-data/raw/qc_history/
-data/raw/raw_market_events/dt=2026-06-05/
+# Data files and runtime artifacts — TOUT le store runtime reste hors dépôt
+# (Parquet analytics + raw, payloads d'évidence, statuts, alertes, manifests, logs)
+data/
+logs/
 
 env/
 venv/

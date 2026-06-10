@@ -18,9 +18,12 @@ source of truth — roadmap Step 11). IV is normalised to a fraction (0.20 = 20%
 """
 from __future__ import annotations
 
+import json
+import threading
 import time
 import urllib3
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from loguru import logger
@@ -39,6 +42,26 @@ from ibind.client.ibkr_definitions import snapshot_by_key
 # for a localhost gateway — silence it.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Évidence brute des réponses /iserver/secdef/* (roadmap Step 2 : « store raw contract
+# payloads as evidence »). JSONL partitionné par date, append-only, best-effort —
+# un échec d'archivage ne doit JAMAIS gêner la collecte.
+_PAYLOAD_DIR = Path(__file__).parent.parent.parent / "data" / "raw_payloads"
+_payload_lock = threading.Lock()
+
+
+def _archive_payload(kind: str, key: str, payload) -> None:
+    try:
+        d = _PAYLOAD_DIR / f"dt={date.today().isoformat()}"
+        d.mkdir(parents=True, exist_ok=True)
+        rec = {"ts": datetime.now(timezone.utc).isoformat(), "kind": kind,
+               "key": key, "payload": payload}
+        line = json.dumps(rec, default=str, ensure_ascii=False)
+        with _payload_lock, open(d / "secdef_payloads.jsonl", "a",
+                                 encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception as exc:  # noqa: BLE001 — l'évidence ne bloque jamais le flux
+        logger.debug(f"payload archive ({kind}/{key}): {exc}")
+
 
 # Our internal field vocabulary → ibind human-readable snapshot keys.
 # (ibind maps these keys to IBKR numeric field codes; codes shown for reference.)
@@ -52,13 +75,22 @@ _FIELD_TO_KEY = {
     "volume":        "volume_long",          # 7762 (numeric; 87 is K/M-formatted)
     "open_interest": "option_open_interest", # 7638
     "iv":            "implied_vol_percent",  # 7633 (PERCENT → divided by 100)
+    "iv30":          "option_implied_vol_percent",  # 7283 — IV 30j du sous-jacent (PERCENT)
     "delta":         "delta",                # 7308
     "gamma":         "gamma",                # 7309
     "vega":          "vega",                 # 7311
     "theta":         "theta",                # 7310
 }
 # Broker returns these in percent; we store fractions to match the whole stack.
-_PERCENT_FIELDS = {"iv"}
+_PERCENT_FIELDS = {"iv", "iv30"}
+
+# Champs de prix : critère de readiness du snapshot (les greeks broker sont un bonus,
+# jamais une condition d'attente).
+_PRICE_READY_FIELDS = ("bid", "ask", "last", "close")
+
+
+def _price_ready(d: Optional[dict]) -> bool:
+    return bool(d) and any(f in d for f in _PRICE_READY_FIELDS)
 
 _MONTHS = {m: i + 1 for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
@@ -103,7 +135,18 @@ class IBKRWebAdapter(BrokerAdapter):
         self.health = SessionHealth()
         self._client: Optional[IbkrClient] = None
         self._tickling = False
-        self._conid_cache: Dict[str, int] = {}   # symbol → underlying conid (stable)
+        self._conid_cache: Dict[str, int] = {}    # symbol → underlying conid (stable)
+        self._secdef_cache: Dict[tuple, list] = {}  # (conid,month,strike,right,exch) → contracts
+        self._strikes_cache: Dict[tuple, List[float]] = {}  # (conid,month,exch) → strikes listés (statiques/session)
+        # Rate-limit des endpoints /iserver/secdef/* : la Web API renvoie 429 au-delà d'un
+        # certain débit (observé le 2026-06-09 : ESTX50 sature, les sous-jacents suivants
+        # se prennent des 429). On espace les appels (throttle global thread-safe, car
+        # resolve_option_grid tire plusieurs threads) + retry/backoff en filet (_call_secdef).
+        self._secdef_lock = threading.Lock()
+        self._secdef_min_interval = 0.15    # s entre 2 appels secdef (~6-7 req/s)
+        self._secdef_last = 0.0
+        self._secdef_retry_tries = 6        # tentatives sur 429 (Too Many Requests)
+        self._secdef_retry_base = 0.5       # backoff exponentiel : 0.5,1,2,4,8 s
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -247,27 +290,66 @@ class IBKRWebAdapter(BrokerAdapter):
     # ------------------------------------------------------------------
 
     def resolve_underlying(self, symbol: str, exchange: str = "SMART",
-                           currency: str = "USD") -> Optional[int]:
-        if symbol in self._conid_cache:
-            return self._conid_cache[symbol]
+                           currency: str = "USD", sec_type: str = "STK") -> Optional[int]:
+        cache_key = f"{symbol}|{sec_type}|{exchange}|{currency}"
+        if cache_key in self._conid_cache:
+            return self._conid_cache[cache_key]
+
+        # Recherche secdef d'abord, désambiguïsée par bourse : gère les multi-cotations
+        # (ex. SAP = ADR NYSE en USD ET ligne IBIS en EUR — on veut la bonne).
+        conid = self._search_conid(symbol, sec_type, exchange, currency)
+
+        # Dernier recours pour une action US non ambiguë.
+        if conid is None and sec_type == "STK":
+            try:
+                data = self._client.stock_conid_by_symbol(
+                    StockQuery(symbol), return_type="dict").data or {}
+                if isinstance(data, dict) and data.get(symbol):
+                    conid = int(data[symbol])
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"stock_conid_by_symbol({symbol}): {exc}")
+
+        if conid is None:
+            logger.warning(f"Could not resolve conid for {symbol} ({sec_type}/{exchange}/{currency})")
+            return None
+        self._conid_cache[cache_key] = conid
+        return conid
+
+    def _search_conid(self, symbol: str, sec_type: str, exchange: Optional[str] = None,
+                      currency: Optional[str] = None) -> Optional[int]:
+        """Résout un conid via /iserver/secdef/search, désambiguïsé par bourse de cotation."""
         try:
-            res = self._client.stock_conid_by_symbol(
-                StockQuery(symbol), return_type="dict")
-            data = res.data or {}
-            conid = data.get(symbol) if isinstance(data, dict) else None
-            if conid is None:
-                logger.warning(f"Could not resolve conid for {symbol}")
-                return None
-            self._conid_cache[symbol] = int(conid)
-            return int(conid)
+            rows = _extract_rows(self._client.search_contract_by_symbol(symbol, sec_type=sec_type))
+            _archive_payload("secdef_search", f"{symbol}|{sec_type}|{exchange}", rows)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"resolve_underlying({symbol}): {exc}")
+            logger.debug(f"search_contract_by_symbol({symbol},{sec_type}): {exc}")
             return None
 
-    def _option_months(self, symbol: str) -> List[str]:
+        def has_type(r):
+            return any(s.get("secType") == sec_type for s in (r.get("sections") or []))
+
+        same_sym = [r for r in rows if r.get("conid")
+                    and str(r.get("symbol", "")).upper() == symbol.upper()]
+        typed = [r for r in same_sym if has_type(r)] or same_sym or [r for r in rows if r.get("conid")]
+        if not typed:
+            return None
+
+        # Désambiguïsation par bourse : le champ 'description' porte la bourse de cotation
+        # (ex. 'IBIS', 'NYSE', 'EUREX') ; sinon on cherche dans les sections.
+        if exchange and exchange.upper() != "SMART":
+            ex = exchange.upper()
+            for r in typed:
+                if str(r.get("description", "")).upper() == ex:
+                    return int(r["conid"])
+            for r in typed:
+                if any(ex in str(s.get("exchange", "")).upper() for s in (r.get("sections") or [])):
+                    return int(r["conid"])
+        return int(typed[0]["conid"])
+
+    def _option_months(self, symbol: str, sec_type: str = "STK") -> List[str]:
         """Available option months for an underlying, e.g. ['JAN26','FEB26',...]."""
         try:
-            res = self._client.search_contract_by_symbol(symbol, sec_type="STK")
+            res = self._client.search_contract_by_symbol(symbol, sec_type=sec_type)
             for row in _extract_rows(res):
                 if str(row.get("symbol", "")).upper() != symbol.upper():
                     continue
@@ -278,33 +360,77 @@ class IBKRWebAdapter(BrokerAdapter):
             logger.warning(f"_option_months({symbol}): {exc}")
         return []
 
-    def _strikes_for_month(self, conid: int, month: str) -> List[float]:
+    def _throttle_secdef(self) -> None:
+        """Espace les appels /iserver/secdef/* pour rester sous le rate-limit (429)."""
+        with self._secdef_lock:
+            wait = self._secdef_min_interval - (time.monotonic() - self._secdef_last)
+            if wait > 0:
+                time.sleep(wait)
+            self._secdef_last = time.monotonic()
+
+    def _call_secdef(self, fn, *args, **kwargs):
+        """Appel /iserver/secdef/* throttlé + retry/backoff sur 429 (Too Many Requests).
+        Chaque réponse est archivée en évidence brute (roadmap Step 2)."""
+        for attempt in range(self._secdef_retry_tries):
+            self._throttle_secdef()
+            try:
+                res = fn(*args, **kwargs)
+                _archive_payload(getattr(fn, "__name__", "secdef"),
+                                 "|".join(str(a) for a in args),
+                                 getattr(res, "data", res))
+                return res
+            except Exception as exc:  # noqa: BLE001
+                if ("429" in str(exc) or "Too Many" in str(exc)) and \
+                        attempt < self._secdef_retry_tries - 1:
+                    time.sleep(self._secdef_retry_base * (2 ** attempt))
+                    continue
+                raise
+
+    def _strikes_for_month(self, conid: int, month: str,
+                           exchange: Optional[str] = None) -> List[float]:
+        # Strikes listés d'un (conid, mois) = statiques sur la session → cache (comme
+        # secdef). Évite de re-appeler /secdef/strikes à chaque cycle (perf + 429).
+        ck = (int(conid), month, exchange)
+        if ck in self._strikes_cache:
+            return self._strikes_cache[ck]
         try:
-            res = self._client.search_strikes_by_conid(str(conid), "OPT", month)
+            res = self._call_secdef(self._client.search_strikes_by_conid,
+                                    str(conid), "OPT", month, exchange=exchange)
             data = res.data or {}
             calls = data.get("call") or data.get("CALL") or []
             puts = data.get("put") or data.get("PUT") or []
-            strikes = {float(s) for s in (calls or puts) if s}
-            return sorted(strikes)
+            strikes = sorted({float(s) for s in (calls or puts) if s})
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"_strikes_for_month({conid},{month}): {exc}")
-            return []
+            return []          # échec (ex. 429 épuisé) NON caché → re-tenté au prochain cycle
+        if strikes:
+            self._strikes_cache[ck] = strikes   # ne cache que les succès
+        return strikes
 
     def _secdef_info(self, conid: int, month: str, strike: float,
-                     right: str) -> list:
+                     right: str, exchange: Optional[str] = None) -> list:
+        # Définitions de contrats = statiques → cache de session (évite des secdef répétés
+        # entre échéances d'un même mois et entre cycles).
+        ck = (int(conid), month, _strike_str(strike), right.upper()[0], exchange)
+        if ck in self._secdef_cache:
+            return self._secdef_cache[ck]
         try:
-            res = self._client.search_secdef_info_by_conid(
-                str(conid), "OPT", month,
+            res = self._call_secdef(self._client.search_secdef_info_by_conid,
+                str(conid), "OPT", month, exchange=exchange,
                 strike=_strike_str(strike), right=right.upper()[0])
-            return _extract_rows(res)
+            rows = _extract_rows(res)
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"_secdef_info({conid},{month},{strike},{right}): {exc}")
-            return []
+            rows = []
+        self._secdef_cache[ck] = rows
+        return rows
 
     def option_chain_params(self, symbol: str, underlying_conid: int,
-                            min_dte: int, max_dte: int) -> Optional[OptionChainParams]:
+                            min_dte: int, max_dte: int,
+                            sec_type: str = "STK",
+                            exchange: Optional[str] = None) -> Optional[OptionChainParams]:
         today = date.today()
-        months = self._option_months(symbol)
+        months = self._option_months(symbol, sec_type)
         if not months:
             logger.warning(f"No option months discovered for {symbol}")
             return None
@@ -332,12 +458,12 @@ class IBKRWebAdapter(BrokerAdapter):
         trading_class = symbol
 
         for m in keep:
-            strikes = self._strikes_for_month(underlying_conid, m)
+            strikes = self._strikes_for_month(underlying_conid, m, exchange)
             if not strikes:
                 continue
             all_strikes.update(strikes)
             atm = min(strikes, key=lambda s: abs(s - spot)) if spot else strikes[len(strikes) // 2]
-            for item in self._secdef_info(underlying_conid, m, atm, "C"):
+            for item in self._secdef_info(underlying_conid, m, atm, "C", exchange):
                 mat = str(item.get("maturityDate") or item.get("expiry") or "")
                 if len(mat) != 8:
                     continue
@@ -365,10 +491,11 @@ class IBKRWebAdapter(BrokerAdapter):
         )
 
     def option_contracts(self, underlying_conid: int, expiry_month: str,
-                         strike: float, right: str) -> List[dict]:
+                         strike: float, right: str,
+                         exchange: Optional[str] = None) -> List[dict]:
         """All contracts for one (month, strike, right): [{expiry, conid, multiplier}]."""
         out = []
-        for item in self._secdef_info(underlying_conid, expiry_month, strike, right):
+        for item in self._secdef_info(underlying_conid, expiry_month, strike, right, exchange):
             mat = str(item.get("maturityDate") or item.get("expiry") or "")
             if len(mat) != 8 or not item.get("conid"):
                 continue
@@ -381,14 +508,14 @@ class IBKRWebAdapter(BrokerAdapter):
         return out
 
     def resolve_option(self, underlying_conid: int, expiry: date, strike: float,
-                       right: str) -> Optional[int]:
-        for c in self.option_contracts(underlying_conid, _month_str(expiry), strike, right):
+                       right: str, exchange: Optional[str] = None) -> Optional[int]:
+        for c in self.option_contracts(underlying_conid, _month_str(expiry), strike, right, exchange):
             if c["expiry"] == expiry:
                 return c["conid"]
         return None
 
     def resolve_options(self, underlying_conid: int, expiries, strikes,
-                        rights=("C", "P")) -> Dict[tuple, int]:
+                        rights=("C", "P"), exchange: Optional[str] = None) -> Dict[tuple, int]:
         """Batched grid resolution: one secdef call per (month, strike, right)."""
         out: Dict[tuple, int] = {}
         cache: Dict[tuple, dict] = {}
@@ -399,11 +526,58 @@ class IBKRWebAdapter(BrokerAdapter):
                     ck = (month, strike, right)
                     if ck not in cache:
                         cache[ck] = {c["expiry"]: c["conid"] for c in
-                                     self.option_contracts(underlying_conid, month, strike, right)}
+                                     self.option_contracts(underlying_conid, month, strike, right, exchange)}
                 for e in expiries:
                     cid = cache.get((_month_str(e), strike, right), {}).get(e)
                     if cid:
                         out[(e, strike, right)] = cid
+        return out
+
+    def strikes_for_expiry(self, underlying_conid: int, expiry: date,
+                           exchange: Optional[str] = None) -> List[float]:
+        """Listed strikes for one expiry (queried via the expiry's contract month)."""
+        return self._strikes_for_month(underlying_conid, _month_str(expiry), exchange)
+
+    def resolve_option_grid(self, underlying_conid: int, expiry_to_strikes: dict,
+                            rights=("C", "P"), exchange: Optional[str] = None) -> Dict[tuple, int]:
+        """
+        Resout tout le grid {expiry: [strikes]} -> {(expiry,strike,right): conid}, en
+        lancant les appels secdef EN PARALLELE (gros gain de vitesse au 1er cycle ;
+        les cycles suivants sont quasi instantanes via le cache secdef).
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        needed = set()
+        for e, strikes in expiry_to_strikes.items():
+            m = _month_str(e)
+            for s in strikes:
+                for r in rights:
+                    needed.add((m, s, r))
+        if not needed:
+            return {}
+
+        resolved: Dict[tuple, dict] = {}
+
+        def _fetch(task):
+            m, s, r = task
+            contracts = self.option_contracts(underlying_conid, m, s, r, exchange)
+            return task, {c["expiry"]: c["conid"] for c in contracts}
+
+        try:
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                for task, mapping in ex.map(_fetch, list(needed)):
+                    resolved[task] = mapping
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"resolve_option_grid parallel: {exc}")
+
+        out: Dict[tuple, int] = {}
+        for e, strikes in expiry_to_strikes.items():
+            m = _month_str(e)
+            for s in strikes:
+                for r in rights:
+                    cid = resolved.get((m, s, r), {}).get(e)
+                    if cid:
+                        out[(e, s, r)] = cid
         return out
 
     # ------------------------------------------------------------------
@@ -437,18 +611,28 @@ class IBKRWebAdapter(BrokerAdapter):
         if not codes:
             return {}
 
-        conid_strs = [str(c) for c in conids]
+        # Snapshot en lots (l'endpoint limite le nombre de conids par appel ; un seul
+        # gros snapshot par symbole au lieu d'un par échéance → bien plus rapide).
         out: Dict[int, Dict[str, float]] = {}
+        conid_list = list(conids)
+        # ~100 conids/appel max : au-dela l'endpoint renvoie un lot vide (no_price).
+        # Observe le 2026-06-09 sur ESTX50/SIE/TTE (>100 conids) → tout no_price.
+        chunk_size = 100
+        for i in range(0, len(conid_list), chunk_size):
+            self._snapshot_chunk(conid_list[i:i + chunk_size], codes, code_to_field, out)
+        return out
 
-        # The snapshot endpoint needs warming up: the first responses often omit
-        # fields (especially computed greeks) until the subscription is established.
-        # Retry, merging fields as they appear, and stop once every conid has data.
+    def _snapshot_chunk(self, conids, codes, code_to_field, out) -> None:
+        # L'endpoint a besoin d'un warm-up : les 1ères réponses omettent souvent des
+        # champs jusqu'à l'établissement de la souscription. On retente en fusionnant.
+        # Snapshot groupe (1 appel/symbole) => on peut se permettre plus de retries.
+        conid_strs = [str(c) for c in conids]
         attempts, sleep_s = 8, 1.0
-        for attempt in range(attempts):
+        for _ in range(attempts):
             try:
                 res = self._client.live_marketdata_snapshot(conid_strs, codes)
             except Exception as exc:  # noqa: BLE001
-                logger.debug(f"snapshot attempt {attempt}: {exc}")
+                logger.debug(f"snapshot chunk: {exc}")
                 time.sleep(sleep_s)
                 continue
             for row in _extract_rows(res):
@@ -464,12 +648,13 @@ class IBKRWebAdapter(BrokerAdapter):
                             if fn in _PERCENT_FIELDS:
                                 val = val / 100.0
                             dest[fn] = val
-            # Stop once every requested conid has at least one populated field.
-            if out and all(out.get(int(c)) for c in conids):
+            # Prêt = au moins UN CHAMP DE PRIX reçu (bid/ask/last/close). Critère
+            # indispensable depuis l'ajout des greeks broker à la requête : un conid
+            # peut recevoir son theta avant son bid/ask — « ≥1 champ » sortait de la
+            # boucle trop tôt et produisait des no_price en masse (régression 10/06).
+            if all(_price_ready(out.get(int(c))) for c in conids):
                 break
             time.sleep(sleep_s)
-
-        return out
 
     def historical_close(self, conid: int) -> Optional[float]:
         if self._client is None:

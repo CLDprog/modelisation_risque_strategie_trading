@@ -306,3 +306,100 @@ def surface_to_dataframe(surface: SurfaceFitResult) -> pd.DataFrame:
                 "model_version": surface.model_version,
             })
     return pd.DataFrame(rows)
+
+
+def interpolate_across_maturities(surface_df: pd.DataFrame,
+                                  target_maturities: List[float]) -> pd.DataFrame:
+    """
+    Eq. 22 — interpolation linéaire en VARIANCE TOTALE entre tranches calibrées :
+
+        w(k,T) = [(T2−T)·w(k,T1) + (T−T1)·w(k,T2)] / (T2−T1)
+
+    `surface_df` = grille calibrée d'UN sous-jacent (colonnes log_moneyness,
+    maturity_years, total_variance — schéma de surface_to_dataframe).
+    `target_maturities` = maturités cibles en années (ex. les tenors exacts de la grille
+    spec : 30/91/…/730 jours, que les échéances listées n'atteignent jamais exactement).
+
+    Hors de la plage calibrée [T_min, T_max], on CLAMPE sur la tranche la plus proche
+    (pas d'extrapolation : on n'invente pas de variance). Retourne le même schéma avec
+    model='eq22_interp'.
+    """
+    if surface_df is None or surface_df.empty:
+        return pd.DataFrame()
+    req = {"log_moneyness", "maturity_years", "total_variance"}
+    if not req.issubset(surface_df.columns):
+        return pd.DataFrame()
+
+    underlying  = surface_df["underlying"].iloc[0] if "underlying" in surface_df.columns else ""
+    snapshot_ts = surface_df["snapshot_ts"].iloc[0] if "snapshot_ts" in surface_df.columns else ""
+
+    # w(k) par tranche, sur la grille k commune (pivot ; les k diffèrent rarement,
+    # un interp 1D par tranche aligne le tout proprement).
+    slices = {}
+    for T, grp in surface_df.groupby("maturity_years"):
+        grp = grp.sort_values("log_moneyness")
+        slices[float(T)] = (grp["log_moneyness"].to_numpy(dtype=float),
+                            grp["total_variance"].to_numpy(dtype=float))
+    Ts = sorted(slices)
+    if not Ts:
+        return pd.DataFrame()
+    k_common = slices[Ts[0]][0]
+
+    def w_on_common(T: float) -> np.ndarray:
+        k, w = slices[T]
+        return np.interp(k_common, k, w)
+
+    rows = []
+    for T in target_maturities:
+        T = float(T)
+        if T <= 0:
+            continue
+        if T <= Ts[0]:
+            w_t, t1, t2 = w_on_common(Ts[0]), Ts[0], Ts[0]          # clamp court
+        elif T >= Ts[-1]:
+            w_t, t1, t2 = w_on_common(Ts[-1]), Ts[-1], Ts[-1]        # clamp long
+        else:
+            t2 = min(t for t in Ts if t >= T)
+            t1 = max(t for t in Ts if t <= T)
+            if t1 == t2:
+                w_t = w_on_common(t1)
+            else:
+                lam = (t2 - T) / (t2 - t1)
+                w_t = lam * w_on_common(t1) + (1.0 - lam) * w_on_common(t2)
+        w_t = np.maximum(w_t, 1e-12)
+        for k, w in zip(k_common, w_t):
+            rows.append({
+                "underlying": underlying, "snapshot_ts": snapshot_ts,
+                "maturity_years": T, "log_moneyness": float(k),
+                "total_variance": float(w),
+                "implied_vol": float(math.sqrt(w / T)),
+                "bracket_t1": t1, "bracket_t2": t2,
+                "model": "eq22_interp",
+            })
+    return pd.DataFrame(rows)
+
+
+def surface_params_to_dataframe(surface: SurfaceFitResult) -> pd.DataFrame:
+    """
+    Paramètres SVI bruts (a, b, rho, m, sigma) par tranche → table `surface_parameters`
+    (roadmap : table jamais écrite). Auditabilité de la calibration (≠ surface_grid qui
+    ne stocke que la grille de vol).
+    """
+    rows = []
+    for s in surface.slices:
+        p = s.svi_params or {}
+        rows.append({
+            "underlying": surface.underlying,
+            "snapshot_ts": surface.snapshot_ts,
+            "expiry": s.expiry,
+            "maturity_years": s.maturity_years,
+            "model": s.model,
+            "n_points": s.n_points,
+            "fit_rmse": s.rmse,
+            "max_error": s.max_error,
+            "quality_flag": s.quality_flag,
+            "svi_a": p.get("a"), "svi_b": p.get("b"), "svi_rho": p.get("rho"),
+            "svi_m": p.get("m"), "svi_sigma": p.get("sigma"),
+            "model_version": surface.model_version,
+        })
+    return pd.DataFrame(rows)

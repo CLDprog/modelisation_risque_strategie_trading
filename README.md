@@ -4,7 +4,7 @@ Infrastructure de risque de volatilité de niveau institutionnel — **Projet M1
 
 Le projet implémente les **16 étapes** du roadmap fourni en cours : collecte de données de marché → forward / carry → volatilité implicite → surface de volatilité (SVI) → pricing → Greeks → scénarios de stress → contrôle qualité (QC), avec persistance, orchestration et observabilité.
 
-> ### 🔌 Connexion broker : IBKR **Client Portal Web API** (REST + WebSocket) — **sans TWS**
+> ### Connexion broker : IBKR **Client Portal Web API** (REST + WebSocket) — **sans TWS**
 > Le projet n'utilise **plus TWS** (l'application de bureau, instable : popups, redémarrage quotidien, déconnexions). À la place, un **gateway léger** tient la session IBKR authentifiée et le code lit les données en HTTP sur `https://localhost:5000`. Deux options de gateway :
 > - **Client Portal Gateway (Java)** — le plus simple à démarrer ▶ voir **[docs/gateway_setup.md](docs/gateway_setup.md)**
 > - **IBeam (Docker)** — automatisé / headless, pour un usage « production » ▶ voir [gateway/docker-compose.yml](gateway/docker-compose.yml)
@@ -55,7 +55,7 @@ Le projet implémente les **16 étapes** du roadmap fourni en cours : collecte d
 
 ---
 
-## 🚀 Démarrage rapide
+## Démarrage rapide
 
 ```bash
 # 1. Dépendances

@@ -1,25 +1,302 @@
+# Univers : EURO STOXX 50 (indice) + ses 50 sociétés composantes.
+# Liste figée depuis la composition officielle STOXX (Wikipedia, révision du 22/09/2025).
+# Devise EUR ; options EUREX. Spec de référence : docs/specification_eurostoxx.md
+#
+# `ibkr_symbol` (optionnel) = ticker utilisé pour la résolution IBKR quand il diffère
+#   de l'id interne `symbol` (doublon SAN Sanofi/Santander ; Sanofi = SAN1 chez IBKR).
+# `option_exchange` (optionnel) = bourse d'options PAR SOUS-JACENT quand les options
+#   n'existent pas sur EUREX (BBVA/IBE → MEFFRV, ARGX → BELFOX). Défaut : options.exchange.
+# Diagnostic live 2026-06-10 : 50/51 résolus avec options ; NDA (Nordea) sans données
+#   (pas d'entitlement Nasdaq Nordic — voir docs/known_limitations.md).
 underlyings:
-  - symbol: SPY
-    exchange: SMART
-    currency: USD
-    sec_type: STK
-    description: "SPDR S&P 500 ETF"
+  - symbol: ESTX50
+    sec_type: IND
+    exchange: EUREX
+    currency: EUR
+    description: "EURO STOXX 50 Index"
 
-  - symbol: QQQ
-    exchange: SMART
-    currency: USD
+  # ───────────── Allemagne — XETRA (IBIS) ─────────────
+  - symbol: ADS
     sec_type: STK
-    description: "Invesco QQQ ETF"
+    exchange: IBIS
+    currency: EUR
+    description: "Adidas"
+  - symbol: ALV
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Allianz"
+  - symbol: BAS
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "BASF"
+  - symbol: BAYN
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Bayer"
+  - symbol: BMW
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "BMW"
+  - symbol: DBK
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Deutsche Bank"
+  - symbol: DB1
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Deutsche Börse"
+  - symbol: DHL
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "DHL Group (ex Deutsche Post)"
+  - symbol: DTE
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Deutsche Telekom"
+  - symbol: IFX
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Infineon Technologies"
+  - symbol: MBG
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Mercedes-Benz Group"
+  - symbol: MUV2
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Munich Re"
+  - symbol: RHM
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Rheinmetall"
+  - symbol: SAP
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "SAP SE"
+  - symbol: SIE
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Siemens AG"
+  - symbol: ENR
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Siemens Energy"
+  - symbol: VOW3
+    sec_type: STK
+    exchange: IBIS
+    currency: EUR
+    description: "Volkswagen (préférentielles)"
 
-  - symbol: AAPL
-    exchange: SMART
-    currency: USD
+  # ───────────── France — Euronext Paris (SBF) ─────────────
+  - symbol: AI
     sec_type: STK
-    description: "Apple Inc."
+    exchange: SBF
+    currency: EUR
+    description: "Air Liquide"
+  - symbol: AIR
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Airbus"
+  - symbol: CS
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "AXA"
+  - symbol: BNP
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "BNP Paribas"
+  - symbol: BN
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Danone"
+  - symbol: EL
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "EssilorLuxottica"
+  - symbol: RMS
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Hermès"
+  - symbol: OR
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "L'Oréal"
+  - symbol: MC
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "LVMH Moët Hennessy"
+  - symbol: SAF
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Safran"
+  - symbol: SGO
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Saint-Gobain"
+  - symbol: SAN
+    ibkr_symbol: SAN1            # ticker IBKR de Sanofi sur SBF ('SAN' seul → ADR Santander NYSE)
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Sanofi"
+  - symbol: SU
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Schneider Electric"
+  - symbol: TTE
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "TotalEnergies SE"
+  - symbol: DG
+    sec_type: STK
+    exchange: SBF
+    currency: EUR
+    description: "Vinci"
+
+  # ───────────── Pays-Bas — Euronext Amsterdam (AEB) ─────────────
+  - symbol: ADYEN
+    sec_type: STK
+    exchange: AEB
+    currency: EUR
+    description: "Adyen"
+  - symbol: AD
+    sec_type: STK
+    exchange: AEB
+    currency: EUR
+    description: "Ahold Delhaize"
+  - symbol: ASML
+    sec_type: STK
+    exchange: AEB
+    currency: EUR
+    description: "ASML Holding"
+  - symbol: INGA
+    sec_type: STK
+    exchange: AEB
+    currency: EUR
+    description: "ING Group"
+  - symbol: PRX
+    sec_type: STK
+    exchange: AEB
+    currency: EUR
+    description: "Prosus"
+  - symbol: WKL
+    sec_type: STK
+    exchange: AEB
+    currency: EUR
+    description: "Wolters Kluwer"
+
+  # ───────────── Espagne — Bolsa de Madrid (BM) ─────────────
+  - symbol: BBVA
+    sec_type: STK
+    exchange: BM
+    currency: EUR
+    option_exchange: MEFFRV      # pas d'options EUREX ; MEFF (2 expiries seulement via IBKR)
+    description: "BBVA"
+  - symbol: SANES
+    ibkr_symbol: SAN
+    sec_type: STK
+    exchange: BM
+    currency: EUR
+    description: "Banco Santander (ticker SAN, désambiguïsé de Sanofi)"
+  - symbol: IBE
+    sec_type: STK
+    exchange: BM
+    currency: EUR
+    option_exchange: MEFFRV      # pas d'options EUREX ; MEFF (11 expiries)
+    description: "Iberdrola"
+  - symbol: ITX
+    sec_type: STK
+    exchange: BM
+    currency: EUR
+    description: "Inditex"
+
+  # ───────────── Italie — Borsa Italiana (BVME) ─────────────
+  - symbol: ENEL
+    sec_type: STK
+    exchange: BVME
+    currency: EUR
+    description: "Enel"
+  - symbol: ENI
+    sec_type: STK
+    exchange: BVME
+    currency: EUR
+    description: "Eni"
+  - symbol: RACE
+    sec_type: STK
+    exchange: BVME
+    currency: EUR
+    description: "Ferrari"
+  - symbol: ISP
+    sec_type: STK
+    exchange: BVME
+    currency: EUR
+    description: "Intesa Sanpaolo"
+  - symbol: UCG
+    sec_type: STK
+    exchange: BVME
+    currency: EUR
+    description: "UniCredit"
+
+  # ───────────── Belgique — Euronext Bruxelles (ENEXT.BE) ─────────────
+  - symbol: ABI
+    sec_type: STK
+    exchange: ENEXT.BE
+    currency: EUR
+    description: "Anheuser-Busch InBev"
+  - symbol: ARGX
+    sec_type: STK
+    exchange: ENEXT.BE
+    currency: EUR
+    option_exchange: BELFOX      # pas d'options EUREX ; dérivés Euronext Bruxelles (6 expiries)
+    description: "Argenx"
+
+  # ───────────── Finlande — Nasdaq Helsinki (HEX) ─────────────
+  # ⚠️ Données INDISPONIBLES (2026-06-10) : conid HEX correct (ticker 'NDA FI') mais le
+  # compte paper n'a pas l'entitlement Nasdaq Nordic (spot vide, même le close) et les
+  # options n'existent que sur OMS Stockholm en SEK (rien sur EUREX). Gardé dans
+  # l'univers (les 50 composantes) ; flagué par le QC. Voir docs/known_limitations.md.
+  - symbol: NDA
+    ibkr_symbol: NDA FI          # ticker IBKR du listing Helsinki ('NDA' seul → Neptune/Aurubis)
+    sec_type: STK
+    exchange: HEX
+    currency: EUR
+    description: "Nordea Bank"
 
 options:
-  exchange: SMART
-  currency: USD
-  maturity_window_days: 180    # maturités jusqu'à 180 jours
-  min_days_to_expiry: 7        # ignorer les options expirant dans moins de 7 jours
-  max_strikes_per_side: 15     # max 15 strikes OTM de chaque côté
+  exchange: EUREX
+  currency: EUR
+  maturity_window_days: 1095     # jusqu'à 3 ans (grille cible dans la spec)
+  min_days_to_expiry: 1          # inclure les très courtes échéances
+  max_strikes_per_side: 8        # provisoire — Step 2 : sélection par delta (±30Δ)
+  # Grille réduite (choix 2026-06-09) — surcharge les défauts de live.py.
+  # Spec prof = 12 tenors + ATM±10/20/30 ; ici 7 tenors cœur + ATM±10/30.
+  # 548j (18m) rajouté le 2026-06-10 : comble le trou 365→730 (meilleure interpolation Eq.22).
+  target_tenors_days: [30, 91, 182, 273, 365, 548, 730]   # 1m,3m,6m,9m,12m,18m,24m
+  delta_ladder: [0.10, 0.30]                                # ailes ; ATM ajouté en plus

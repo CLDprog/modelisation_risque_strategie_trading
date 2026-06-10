@@ -1,4 +1,4 @@
-"""Page 1 — Monitoring du collecteur (roadmap : runbook start-of-day)."""
+﻿"""Page 1 — Monitoring du collecteur (roadmap : runbook start-of-day)."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -11,7 +11,7 @@ import dash_bootstrap_components as dbc
 
 from src.data.source import datasource
 
-dash.register_page(__name__, path="/", name="Collecteur")
+dash.register_page(__name__, path="/collecteur", name="Collecteur")
 
 
 def _metric_box(value, label, css=""):
@@ -24,7 +24,7 @@ def _metric_box(value, label, css=""):
 def _info_row(label, value):
     return html.Div([
         html.Span(label + " : ", className="text-muted me-2 small"),
-        html.Span(value, className="text-light small"),
+        html.Span(value, className="text-dark small"),
     ], className="mb-1")
 
 
@@ -98,7 +98,7 @@ layout = dbc.Container([
                 "Le gateway IBKR Web (Client Portal) doit être lancé et authentifié "
                 "sur https://localhost:5000. Le collecteur reconnecte automatiquement "
                 "si la session tombe.",
-                color="dark", className="mb-0 border border-secondary",
+                color="secondary", className="mb-0 border",
             ),
         ]),
     ], className="card"),
@@ -171,7 +171,7 @@ def refresh_collector(_):
         spot = sd.get("spot")
         rows.append({
             "symbol":   sym,
-            "spot":     f"${float(spot):.2f}" if spot else "—",
+            "spot":     f"{float(spot):,.2f} €" if spot else "—",
             "n_quotes": sd.get("n_quotes", 0),
             "updated":  _age_str(sd.get("updated")),
             "state":    "OK" if spot else ("erreur" if sd.get("error") else "—"),

@@ -1,4 +1,4 @@
-"""Page 2 — Instrument Master, symbol-aware avec callback dynamique."""
+﻿"""Page 2 — Instrument Master, symbol-aware avec callback dynamique."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -97,11 +97,11 @@ def refresh_universe(_, symbol):
 
     fig_strikes = go.Figure(go.Bar(
         x=summary["days_to_expiry"], y=summary["n_strikes"],
-        marker_color="#58a6ff",
+        marker_color="#0969da",
         text=summary["n_strikes"], textposition="outside",
     ))
     fig_strikes.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=40, r=20, t=20, b=40),
         xaxis_title="Jours à l'expiration", yaxis_title="Nombre de strikes",
     )
@@ -116,10 +116,10 @@ def refresh_universe(_, symbol):
         mode="lines+markers+text",
         text=[f"{v:.1f}%" for v in atm["implied_vol"] * 100],
         textposition="top center",
-        line=dict(color="#3fb950", width=2), marker=dict(size=8),
+        line=dict(color="#1a7f37", width=2), marker=dict(size=8),
     ))
     fig_atm.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=40, r=20, t=20, b=40),
         xaxis_title="Jours", yaxis_title="IV ATM (%)",
     )

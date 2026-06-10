@@ -1,4 +1,4 @@
-"""Page 10 — QC & Validation, symbol-aware avec callbacks dynamiques."""
+﻿"""Page 10 — QC & Validation, symbol-aware avec callbacks dynamiques."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -13,7 +13,7 @@ from src.data import no_data_alert
 
 dash.register_page(__name__, path="/qc", name="QC & Validation")
 
-STATUS_COLORS = {"pass": "#3fb950", "warn": "#d29922", "fail": "#f85149"}
+STATUS_COLORS = {"pass": "#1a7f37", "warn": "#9a6700", "fail": "#cf222e"}
 STATUS_ICONS  = {"pass": "✓", "warn": "⚠", "fail": "✗"}
 
 layout = dbc.Container([
@@ -59,15 +59,72 @@ layout = dbc.Container([
             style_cell={"textAlign": "center", "padding": "8px"},
             style_data_conditional=[
                 {"if": {"filter_query": '{status} = "fail"', "column_id": "status"},
-                 "color": "#f85149", "fontWeight": "bold"},
+                 "color": "#cf222e", "fontWeight": "bold"},
                 {"if": {"filter_query": '{status} = "warn"', "column_id": "status"},
-                 "color": "#d29922", "fontWeight": "bold"},
+                 "color": "#9a6700", "fontWeight": "bold"},
                 {"if": {"filter_query": '{status} = "pass"', "column_id": "status"},
-                 "color": "#3fb950"},
+                 "color": "#1a7f37"},
             ],
             sort_action="native",
         )),
     ], className="card mt-2"),
+
+    dbc.Card([
+        dbc.CardHeader("Réconciliation des greeks — publiés vs différences finies"),
+        dbc.CardBody([
+            html.P("Recalcul indépendant des greeks par re-pricing (Black-76 européen / CRR américain) "
+                   "sur un échantillon de la chaîne. Verdict basé sur delta et vega (gamma/theta = info : "
+                   "bump bruité et écart de convention forward/spot).", className="text-muted small"),
+            html.Div(id="qc-recon-summary", className="mb-2"),
+            dash_table.DataTable(
+                id="qc-recon-table",
+                style_header={"textTransform": "none"},
+                columns=[
+                    {"name": "Expiry",  "id": "expiry"},
+                    {"name": "Strike",  "id": "strike"},
+                    {"name": "C/P",     "id": "right"},
+                    {"name": "Modèle",  "id": "model"},
+                    {"name": "Δ publié","id": "delta_pub"},
+                    {"name": "Δ diff-finies", "id": "delta_fd"},
+                    {"name": "Δ écart", "id": "delta_diff"},
+                    {"name": "ν publié","id": "vega_pub"},
+                    {"name": "ν diff-finies", "id": "vega_fd"},
+                    {"name": "ν écart", "id": "vega_diff"},
+                    {"name": "Γ écart", "id": "gamma_diff"},
+                    {"name": "Θ écart", "id": "theta_diff"},
+                ],
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "center", "padding": "6px", "fontSize": "13px"},
+                sort_action="native", page_size=12,
+            ),
+        ]),
+    ], className="card mt-4"),
+
+    dbc.Card([
+        dbc.CardHeader("Triage (qc_triage) — checks en warn/fail du run"),
+        dbc.CardBody(dash_table.DataTable(
+            id="qc-triage-table",
+            columns=[
+                {"name": "Check",   "id": "check_name"},
+                {"name": "Cible",   "id": "target_key"},
+                {"name": "Statut",  "id": "status"},
+                {"name": "Sévérité","id": "severity"},
+                {"name": "Valeur",  "id": "measured_value"},
+                {"name": "Seuil",   "id": "threshold"},
+                {"name": "Raison",  "id": "reason_code"},
+                {"name": "Run",     "id": "run_id"},
+            ],
+            style_table={"overflowX": "auto"},
+            style_cell={"textAlign": "center", "padding": "6px", "fontSize": "13px"},
+            style_data_conditional=[
+                {"if": {"filter_query": '{status} = "fail"', "column_id": "status"},
+                 "color": "#cf222e", "fontWeight": "bold"},
+                {"if": {"filter_query": '{status} = "warn"', "column_id": "status"},
+                 "color": "#9a6700", "fontWeight": "bold"},
+            ],
+            sort_action="native", page_size=10,
+        )),
+    ], className="card mt-4"),
 ], fluid=True)
 
 
@@ -103,23 +160,23 @@ def refresh_qc(_, symbol):
     fig_gauge = go.Figure(go.Indicator(
         mode="gauge+number",
         value=pct,
-        number={"suffix": "%", "font": {"color": "#58a6ff", "size": 40}},
+        number={"suffix": "%", "font": {"color": "#0969da", "size": 40}},
         gauge={
-            "axis":  {"range": [0, 100], "tickcolor": "#8b949e"},
-            "bar":   {"color": "#58a6ff"},
-            "bgcolor": "#21262d",
+            "axis":  {"range": [0, 100], "tickcolor": "#57606a"},
+            "bar":   {"color": "#0969da"},
+            "bgcolor": "#ffffff",
             "steps": [
                 {"range": [0, 60],   "color": "#3d1c1c"},
                 {"range": [60, 85],  "color": "#3d2e00"},
                 {"range": [85, 100], "color": "#0d2818"},
             ],
-            "threshold": {"line": {"color": "#3fb950", "width": 3}, "value": 85},
+            "threshold": {"line": {"color": "#1a7f37", "width": 3}, "value": 85},
         },
     ))
     fig_gauge.update_layout(
-        template="plotly_dark", paper_bgcolor="#161b22",
+        template="plotly_white", paper_bgcolor="#ffffff",
         margin=dict(l=30, r=30, t=30, b=10), height=220,
-        font=dict(color="#e6edf3"),
+        font=dict(color="#1f2328"),
     )
 
     # Alertes fail/warn
@@ -162,14 +219,14 @@ def refresh_qc(_, symbol):
                     html.Div([
                         html.Span("Val: ", className="text-muted small"),
                         html.Span(f"{row['measured_value']:.4f}",
-                                  style={"color": STATUS_COLORS.get(row["status"], "#e6edf3")},
+                                  style={"color": STATUS_COLORS.get(row["status"], "#1f2328")},
                                   className="small"),
                         html.Span(f" / {row['threshold']:.4f}", className="text-muted small"),
                     ], className="mt-1"),
                     html.Small(row["reason_code"], className="text-muted"),
                 ]),
             ], className="card h-100",
-               style={"borderLeft": f"3px solid {STATUS_COLORS.get(row['status'], '#8b949e')}"}),
+               style={"borderLeft": f"3px solid {STATUS_COLORS.get(row['status'], '#57606a')}"}),
             width=3, className="mb-3",
         )
         for _, row in qc.iterrows()
@@ -184,6 +241,45 @@ def refresh_qc(_, symbol):
         cards,
         qc.round(4).to_dict("records"),
     )
+
+
+@callback(
+    Output("qc-recon-summary", "children"),
+    Output("qc-recon-table",   "data"),
+    Output("qc-triage-table",  "data"),
+    Input("qc-interval",       "n_intervals"),
+    Input("selected-symbol",   "data"),
+)
+def refresh_qc_extras(_, symbol):
+    sym = symbol or "ESTX50"
+
+    recon = datasource.get_greeks_reconciliation(sym)
+    summary, recon_data = html.Small("Pas d'échantillon de réconciliation pour ce sous-jacent.",
+                                     className="text-muted"), []
+    if not recon.empty:
+        d_max = float(recon["delta_diff"].abs().max()) if "delta_diff" in recon.columns else 0.0
+        v_max = float(recon["vega_diff"].abs().max()) if "vega_diff" in recon.columns else 0.0
+        ok = d_max < 0.05 and v_max < 0.05
+        summary = [
+            dbc.Badge(f"{len(recon)} options échantillonnées", color="info", className="me-2"),
+            dbc.Badge(f"max |Δ écart| = {d_max:.4f}", color="success" if d_max < 0.05 else "warning",
+                      className="me-2"),
+            dbc.Badge(f"max |ν écart| = {v_max:.4f}", color="success" if v_max < 0.05 else "warning",
+                      className="me-2"),
+            dbc.Badge("greeks cohérents" if ok else "écarts à examiner",
+                      color="success" if ok else "warning"),
+        ]
+        cols = [c["id"] for c in [
+            {"id": "expiry"}, {"id": "strike"}, {"id": "right"}, {"id": "model"},
+            {"id": "delta_pub"}, {"id": "delta_fd"}, {"id": "delta_diff"},
+            {"id": "vega_pub"}, {"id": "vega_fd"}, {"id": "vega_diff"},
+            {"id": "gamma_diff"}, {"id": "theta_diff"}]]
+        recon_data = recon[[c for c in cols if c in recon.columns]].round(5).to_dict("records")
+
+    triage = datasource.get_qc_triage(sym)
+    triage_data = triage.round(4).to_dict("records") if not triage.empty else []
+
+    return summary, recon_data, triage_data
 
 
 def _count(value, label):

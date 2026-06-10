@@ -232,7 +232,7 @@ def solve_iv_american(market_price: float, spot: float, strike: float,
 # ---------------------------------------------------------------------------
 
 def solve_chain_iv(snapshot_df, forward_results: dict, rate: float,
-                   cfg: dict) -> list[dict]:
+                   cfg: dict, american: bool = False) -> list[dict]:
     """
     Solve IV for all usable options in a snapshot_df.
 
@@ -269,14 +269,28 @@ def solve_chain_iv(snapshot_df, forward_results: dict, rate: float,
         if mid is None or mid <= 0:
             continue
 
-        result = solve_iv(
-            market_price=mid, forward=forward,
-            strike=row["strike"], maturity=T, rate=rate,
-            right=row["right"], contract_key=row["instrument_key"],
-            snapshot_ts=row["snapshot_ts"],
-            lower_vol=lower_vol, upper_vol=upper_vol,
-            price_tol=price_tol, max_iter=max_iter,
-        )
+        if american:
+            spot = row.get("reference_spot")
+            # carry (dividende implicite) dérivé du forward déjà estimé par parité :
+            # F = S·exp((r−q)T) ⇒ carry q tel que (r−q) = ln(F/S)/T.
+            carry = (rate - math.log(forward / spot) / T
+                     if spot and spot > 0 and forward > 0 and T > 0 else rate)
+            result = solve_iv_american(
+                market_price=mid, spot=spot, strike=row["strike"],
+                maturity=T, rate=rate, carry=carry, right=row["right"],
+                contract_key=row["instrument_key"], snapshot_ts=row["snapshot_ts"],
+                lower_vol=lower_vol, upper_vol=upper_vol,
+                price_tol=price_tol, max_iter=max_iter,
+            )
+        else:
+            result = solve_iv(
+                market_price=mid, forward=forward,
+                strike=row["strike"], maturity=T, rate=rate,
+                right=row["right"], contract_key=row["instrument_key"],
+                snapshot_ts=row["snapshot_ts"],
+                lower_vol=lower_vol, upper_vol=upper_vol,
+                price_tol=price_tol, max_iter=max_iter,
+            )
 
         # Eq 6 & 7: log-moneyness and total variance
         log_moneyness = math.log(row["strike"] / forward) if forward > 0 else float("nan")

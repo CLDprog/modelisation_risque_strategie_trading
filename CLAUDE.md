@@ -61,6 +61,13 @@ IBKR Web API → connectivity(adapter) → collectors → snapshots → forwards
 
 **Règle fondamentale :** les données brutes (`raw_market_events`) sont immuables et append-only ; toutes les analytics sont recalculables depuis le raw.
 
+### Univers & pricing (EURO STOXX 50)
+
+- **Univers** : indice **ESTX50** (IND/EUREX, pricing **Black-76 européen**) + ses **50 sociétés composantes** (STK, options EUREX, pricing **CRR américain**). Liste figée dans `configs/universe.yaml` (composition STOXX). Champs optionnels par sous-jacent : **`ibkr_symbol`** = ticker IBKR quand il diffère de l'id interne `symbol` (ex. `SANES`→`SAN`, Sanofi→`SAN1`, Nordea→`NDA FI`) ; **`option_exchange`** = bourse d'options quand pas EUREX (BBVA/IBE→`MEFFRV`, ARGX→`BELFOX`). NDA (Nordea) = données indisponibles (entitlement Nasdaq Nordic manquant — voir `docs/known_limitations.md`).
+- **Grille pilotée par config** : `options.target_tenors_days` + `options.delta_ladder` dans `universe.yaml` (actuel : **7 tenors cœur (1m,3m,6m,9m,12m,18m,24m) + ATM±10/30Δ** — choix validé ; 548j ajouté le 2026-06-10 pour combler le trou 365→730) ; défauts complets (12 tenors, ATM±10/20/30) restent dans `live.py`.
+- **Routage pricing/IV/greeks** : `american = (sec_type == "STK")`. Greeks américains via `greeks_american` (méthode des nœuds de l'arbre, pas diff-finies par bump). IV américaine via `solve_iv_american` (carry dérivé du forward).
+- **Tables Parquet produites** : `iv_points`, `forward_curve`, `surface_grid`, **`surface_parameters`** (params SVI), **`surface_interpolated`** (Eq.22, tenors cibles exacts), **`pricing_results`** (round-trip prix↔IV), **`dispersion_diagnostics`** (Eq.23, corrélation implicite indice/composantes — poids égaux par défaut, champ `weight` de universe.yaml sinon), `market_state_snapshots`, **`forward_diagnostics`**, **`iv_diagnostics`**, **`greeks_reconciliation`**, `qc_results`/`qc_triage`/`qc_anomalies`, **`positions`** + **`position_risk`** + `risk_aggregates` (uniquement si positions).
+
 ### Connexion broker (`src/connectivity/`)
 
 - `broker.py` — `BrokerAdapter` (ABC) : **interface broker-agnostique** consommée par tout le code, + types normalisés (`SessionHealth`, `OptionChainParams`, `BrokerPosition`) + helper `to_float`. Aucun import de SDK broker ici.
@@ -121,5 +128,12 @@ Tous les seuils économiques dans les YAML. La connexion Web API est dans `broke
 - Le **gateway IBKR Web API** doit être lancé et authentifié (`https://localhost:5000`) avant le collecteur. Voir `docs/gateway_setup.md`.
 - L'adaptateur utilise `cacert=false` (certif local auto-signé) → warnings TLS silencés volontairement.
 - Les schemas Parquet/SQLite sont initialisés automatiquement.
-- Pour ajouter un symbole : une entrée dans `configs/universe.yaml` suffit (la chaîne est découverte automatiquement via l'API).
+- Pour ajouter un symbole : une entrée dans `configs/universe.yaml` suffit (la chaîne est découverte automatiquement via l'API). Pour un ticker en doublon, ajouter `ibkr_symbol`.
+- **Rate-limit EUREX** : les endpoints `/iserver/secdef/*` plafonnent (snapshot ~**100 conids/appel** ; **429** sur appels secdef en rafale). Géré dans l'adaptateur : `chunk_size=100`, throttle thread-safe + retry/backoff (`_call_secdef`), cache de session des strikes/secdef. 1er cycle (froid) long (~20-25 min pour 50 valeurs) ; cycles suivants rapides (cache).
+- **`run_collector`** : `--max-cycles N` (arrêt auto, pratique pour tester), `--log-level` (défaut INFO → fichier `logs/vol_infra_<date>.log`). Le `collector_status.json` porte `cycle_secs` + `n_usable`/symbole.
+- **QC ajoutés** : `option_chain_coverage`, `put_call_parity` (tolérance ×3 pour les américaines), `greeks_reconciliation` (diff-finies), `carry_consistency` (bornes du carry implicite), `broker_greeks_reconciliation` (plateforme vs broker ; 'skip' si greeks broker absents). **`aggregate_risk`** agrège vraiment par bucket (`aggregate_risk_frame`) : détail ligne-à-ligne → `position_risk`, agrégats → `risk_aggregates`.
+- **Usabilité des quotes** : décidée par `src/qc/quote_filters.py` (librairie nommée, version qf_v2) — les seuils de `qc.yaml::quote_filters` sont la SEULE source de vérité (plus de valeur en dur). Greeks broker capturés dans iv_points (`broker_*`, diagnostic).
+- **Évidence brute secdef** : chaque réponse `/iserver/secdef/*` est archivée dans `data/raw_payloads/dt=*/secdef_payloads.jsonl` (append-only, best-effort).
+- **Exploitation** : escalade S1-S4 sur les alertes (qc.yaml `escalation`) + routage externe optionnel (`alert_router.py`) ; métriques de cycle dans `collector_status.json::metrics` ; scheduler Windows via `scripts/schedule_collector.ps1` ; checklist handover `scripts/handover_check.py`.
+- **`ParquetStore.write`** : `data.parquet` = dernier cycle (lu par le front) ; avec `version=run_id`, chaque cycle/replay est AUSSI conservé dans `<partition>/versions/<run_id>.parquet` (`list_versions`/`read_version`). Le raw reste append-only.
 - Greeks/IV du broker = **diagnostic uniquement** ; la plateforme recalcule ses propres greeks depuis l'IV résolue.

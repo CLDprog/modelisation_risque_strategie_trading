@@ -82,7 +82,8 @@ def build_snapshots_job(session_date: date,
 
         if snapshot_rows:
             all_snaps = pd.concat(snapshot_rows, ignore_index=True)
-            analytics_store.write("market_state_snapshots", all_snaps, session_date)
+            analytics_store.write("market_state_snapshots", all_snaps, session_date,
+                                  version=run_id)
             logger.info(f"[{run_id}] Wrote {len(all_snaps)} snapshot rows")
         else:
             logger.warning(f"[{run_id}] No snapshots generated")
@@ -239,7 +240,8 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
     from src.surfaces.calibration import fit_surface, surface_to_dataframe
     from src.qc.checks import run_qc_suite, qc_results_to_dataframe
     from src.risk.scenarios import load_scenarios_from_config, run_all_scenarios, scenario_reports_to_dataframe
-    from src.risk.aggregation import compute_position_risk, position_risk_to_dataframe
+    from src.risk.aggregation import (compute_position_risk, position_risk_to_dataframe,
+                                       aggregate_risk)
     from src.utils.dates import maturity_years as calc_t
     import datetime as dt_mod
 
@@ -312,7 +314,7 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
         if not fwd_df.empty:
             for k, v in _lineage.items():
                 fwd_df[k] = v
-            analytics_store.write("forward_curve", fwd_df, session_date)
+            analytics_store.write("forward_curve", fwd_df, session_date, version=run_id)
 
         # 3. IV solving
         logger.info(f"[{run_id}] Solving implied volatilities...")
@@ -321,7 +323,7 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
         if not iv_df.empty:
             for k, v in _lineage.items():
                 iv_df[k] = v
-            analytics_store.write("iv_points", iv_df, session_date)
+            analytics_store.write("iv_points", iv_df, session_date, version=run_id)
 
         # 4. Surface calibration
         logger.info(f"[{run_id}] Fitting volatility surfaces...")
@@ -339,7 +341,8 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
                         surf_df[k] = v
                     analytics_store.write(
                         "surface_grid", surf_df, session_date,
-                        filename=f"{symbol}_surface.parquet"
+                        filename=f"{symbol}_surface.parquet",
+                        version=f"{run_id}_{symbol}",
                     )
 
         # 5. Risk analytics (with provided positions)
@@ -355,10 +358,15 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
                     if risk:
                         risk_list.append(risk)
             if risk_list:
-                risk_df = position_risk_to_dataframe(risk_list)
-                for k, v in _lineage.items():
-                    risk_df[k] = v
-                analytics_store.write("risk_aggregates", risk_df, session_date)
+                # Détail ligne-à-ligne → position_risk ; vraie agrégation par bucket → risk_aggregates.
+                detail = position_risk_to_dataframe(risk_list)
+                agg = aggregate_risk(risk_list, "underlying_symbol")
+                for df_ in (detail, agg):
+                    for k, v in _lineage.items():
+                        df_[k] = v
+                analytics_store.write("position_risk", detail, session_date, version=run_id)
+                if not agg.empty:
+                    analytics_store.write("risk_aggregates", agg, session_date, version=run_id)
         else:
             logger.info(f"[{run_id}] No positions provided — skipping risk step")
             iv_rows_by_key = {r["contract_key"]: r for r in iv_rows}
@@ -373,7 +381,7 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
         if not scen_df.empty:
             for k, v in _lineage.items():
                 scen_df[k] = v
-            analytics_store.write("scenario_results", scen_df, session_date)
+            analytics_store.write("scenario_results", scen_df, session_date, version=run_id)
 
         # 7. QC suite
         logger.info(f"[{run_id}] Running QC checks...")
@@ -392,7 +400,7 @@ def run_eod_pipeline(session_date: date, config_dir: str = "./configs",
         if not qc_df.empty:
             for k, v in _lineage.items():
                 qc_df[k] = v
-            analytics_store.write("qc_results", qc_df, session_date)
+            analytics_store.write("qc_results", qc_df, session_date, version=run_id)
 
         status = "success"
         logger.info(f"[{run_id}] EOD pipeline COMPLETE")

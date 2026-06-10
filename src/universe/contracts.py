@@ -245,17 +245,21 @@ def discover_universe(adapter, universe_cfg: dict) -> InstrumentMaster:
         exchange = u_cfg.get("exchange", "SMART")
         currency = u_cfg.get("currency", "USD")
 
-        conid = adapter.resolve_underlying(symbol, exchange, currency)
+        sec_type = u_cfg.get("sec_type", "STK")
+        ibkr_symbol = u_cfg.get("ibkr_symbol", symbol)
+        opt_exchange = u_cfg.get("option_exchange") or opt_cfg.get("exchange")
+        conid = adapter.resolve_underlying(ibkr_symbol, exchange, currency, sec_type)
         if conid is None:
             logger.warning(f"Could not resolve underlying: {symbol}")
             continue
 
         master.add_underlying(Underlying(
-            symbol=symbol, exchange=exchange, currency=currency, sec_type="STK",
+            symbol=symbol, exchange=exchange, currency=currency, sec_type=sec_type,
             description=u_cfg.get("description", ""), contract_id_broker=conid))
         logger.info(f"Underlying resolved: {symbol} (conid={conid})")
 
-        chain = adapter.option_chain_params(symbol, conid, min_dte, max_dte)
+        chain = adapter.option_chain_params(ibkr_symbol, conid, min_dte, max_dte,
+                                            sec_type, opt_exchange)
         if not chain:
             logger.warning(f"No option chain found for {symbol}")
             continue
@@ -266,7 +270,7 @@ def discover_universe(adapter, universe_cfg: dict) -> InstrumentMaster:
                 for right in ("C", "P"):
                     master.add_option(OptionContract(
                         underlying_symbol=symbol, expiry=expiry, strike=float(strike),
-                        right=right, exchange=opt_cfg.get("exchange", "SMART"),
+                        right=right, exchange=opt_exchange or "SMART",
                         currency=opt_cfg.get("currency", "USD"),
                         multiplier=int(chain.multiplier or 100),
                         trading_class=chain.trading_class))
