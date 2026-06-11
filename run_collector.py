@@ -527,7 +527,13 @@ class Collector:
         all_iv_diag, all_fwd_diag, all_pricing = [], [], []
         spots, surfaces = {}, {}
 
-        for symbol in self.symbols:
+        # Vide le pool de souscriptions market data AVANT CHAQUE SYMBOLE : IBKR limite
+        # à ~100 lignes simultanées et un symbole en consomme ~72 (chaîne + spot +
+        # iv30). Sans purge systématique, dès le 2e symbole on dépasse et le serveur
+        # évince — snapshots sans prix (constaté le 2026-06-11 : sains après purge,
+        # morts 4-6 symboles plus loin). Le pool persiste aussi ENTRE les runs.
+        for i_sym, symbol in enumerate(self.symbols):
+            self.adapter.unsubscribe_all_marketdata()
             try:
                 r = self.collect_symbol(symbol)
                 spots[symbol] = r["spot"]

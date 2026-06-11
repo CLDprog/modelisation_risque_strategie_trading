@@ -615,9 +615,11 @@ class IBKRWebAdapter(BrokerAdapter):
         # gros snapshot par symbole au lieu d'un par échéance → bien plus rapide).
         out: Dict[int, Dict[str, float]] = {}
         conid_list = list(conids)
-        # ~100 conids/appel max : au-dela l'endpoint renvoie un lot vide (no_price).
-        # Observe le 2026-06-09 sur ESTX50/SIE/TTE (>100 conids) → tout no_price.
-        chunk_size = 100
+        # Taille de lot : 100 = plafond dur de l'endpoint (lot vide au-delà, observé
+        # 2026-06-09). MAIS le farm différé EUREX dégrade les gros lots quand il est
+        # chargé (2026-06-11 matin : lots de ~70 → 0 prix pendant que des lots de 30
+        # passaient sans problème) → 30 conids/lot = taille robuste constatée.
+        chunk_size = 30
         for i in range(0, len(conid_list), chunk_size):
             self._snapshot_chunk(conid_list[i:i + chunk_size], codes, code_to_field, out)
         return out
@@ -625,10 +627,22 @@ class IBKRWebAdapter(BrokerAdapter):
     def _snapshot_chunk(self, conids, codes, code_to_field, out) -> None:
         # L'endpoint a besoin d'un warm-up : les 1ères réponses omettent souvent des
         # champs jusqu'à l'établissement de la souscription. On retente en fusionnant.
-        # Snapshot groupe (1 appel/symbole) => on peut se permettre plus de retries.
+        #
+        # Warm-up ADAPTATIF (2026-06-11) : la latence du flux différé EUREX varie
+        # énormément (~2s en après-midi, >8s à l'ouverture européenne — constaté en
+        # séance : des lots entiers revenaient sans prix avec 8 essais fixes). On
+        # poursuit TANT QUE des prix continuent d'arriver ; on ne s'arrête que sur
+        # complétude, sur plateau (plus aucun nouveau prix sur 5 essais après un
+        # minimum de 8 — ailes réellement mortes), ou au plafond de sécurité.
         conid_strs = [str(c) for c in conids]
-        attempts, sleep_s = 8, 1.0
-        for _ in range(attempts):
+        max_attempts, min_attempts, plateau_limit, sleep_s = 30, 8, 5, 1.0
+        ready_prev, plateau = -1, 0
+        # Le critère « prêt = prix reçu » n'a de sens que si des champs de PRIX sont
+        # demandés. Pour un snapshot iv30/greeks seul (sigma_ref), prêt = ≥1 champ —
+        # sinon la boucle plafonne 13 essais pour rien (~15s perdues par symbole).
+        wants_price = any(fn in _PRICE_READY_FIELDS for fn in code_to_field.values())
+        is_ready = _price_ready if wants_price else bool
+        for attempt in range(max_attempts):
             try:
                 res = self._client.live_marketdata_snapshot(conid_strs, codes)
             except Exception as exc:  # noqa: BLE001
@@ -648,13 +662,40 @@ class IBKRWebAdapter(BrokerAdapter):
                             if fn in _PERCENT_FIELDS:
                                 val = val / 100.0
                             dest[fn] = val
-            # Prêt = au moins UN CHAMP DE PRIX reçu (bid/ask/last/close). Critère
-            # indispensable depuis l'ajout des greeks broker à la requête : un conid
-            # peut recevoir son theta avant son bid/ask — « ≥1 champ » sortait de la
-            # boucle trop tôt et produisait des no_price en masse (régression 10/06).
-            if all(_price_ready(out.get(int(c))) for c in conids):
+            # Prêt = au moins UN CHAMP DE PRIX reçu (bid/ask/last/close) — les greeks
+            # broker ne comptent pas (ils arrivent parfois AVANT les prix).
+            n_ready = sum(1 for c in conids if is_ready(out.get(int(c))))
+            if n_ready == len(conids):
                 break
+            if n_ready == ready_prev:
+                plateau += 1
+                if attempt + 1 >= min_attempts and plateau >= plateau_limit:
+                    # INFO (pas debug) : un lot qui plafonne bas = signal opérateur
+                    # (farm lent / saturation) à voir sans relancer en DEBUG.
+                    logger.info(f"snapshot: plateau à {n_ready}/{len(conids)} prix "
+                                f"après {attempt + 1} essais")
+                    break
+            else:
+                ready_prev, plateau = n_ready, 0
             time.sleep(sleep_s)
+
+    def unsubscribe_all_marketdata(self) -> bool:
+        """Vide le pool de souscriptions market data de la session gateway.
+
+        Chaque appel snapshot SOUSCRIT ses conids côté serveur pour TOUTE la session
+        (même entre deux process). À ~50 symboles × ~70 options par cycle, le pool
+        sature et les nouveaux lots reviennent SANS PRIX (constaté 2026-06-11 matin :
+        0/68 sur ESTX50 → 68/68 immédiatement après unsubscribeall). À appeler en
+        début de cycle + périodiquement pendant la collecte."""
+        if self._client is None:
+            return False
+        try:
+            self._client.marketdata_unsubscribe_all()
+            logger.info("Market data: pool de souscriptions purgé (unsubscribeall)")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"unsubscribeall: {exc}")
+            return False
 
     def historical_close(self, conid: int) -> Optional[float]:
         if self._client is None:

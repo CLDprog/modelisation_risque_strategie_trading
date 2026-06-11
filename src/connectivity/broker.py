@@ -224,6 +224,14 @@ class BrokerAdapter(ABC):
     def historical_close(self, conid: int) -> Optional[float]:
         """Most recent daily close — robust reference that works when the market is shut."""
 
+    def unsubscribe_all_marketdata(self) -> bool:
+        """Release server-side market data subscriptions (no-op by default).
+
+        Brokers that keep per-session subscription pools (IBKR Web API) MUST override:
+        the pool saturates after a few thousand snapshot conids and new batches come
+        back without prices."""
+        return False
+
     # -- positions --------------------------------------------------------
     @abstractmethod
     def positions(self) -> List[BrokerPosition]:
