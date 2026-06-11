@@ -76,6 +76,8 @@ sidebar = html.Div([
          dbc.NavLink("Variance swap & VSTOXX", href="/varswap",
                      active="exact", className="nav-link"),
          dbc.NavLink("Trade de dispersion", href="/dispersion",
+                     active="exact", className="nav-link"),
+         dbc.NavLink("Risque de stratégie", href="/strategy-risk",
                      active="exact", className="nav-link")],
         vertical=True, pills=False,
     ),
