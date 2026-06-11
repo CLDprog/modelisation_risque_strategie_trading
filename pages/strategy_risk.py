@@ -324,15 +324,18 @@ def ci_view(sharpe, days, conf):
     fig.add_hline(y=float(sharpe), line_dash="dot", line_color="#1a7f37",
                   annotation_text="Ŝ")
     fig.add_hline(y=0, line_color="#cf222e", line_width=1)
+    # ⚠️ Axe LOG : add_vline attend la coordonnée en log10 (sinon une ligne à
+    # « 433 » est placée à 10^433 et l'axe explose).
     if r["t_days_for_significance"]:
-        fig.add_vline(x=r["t_days_for_significance"], line_dash="dash",
+        fig.add_vline(x=math.log10(r["t_days_for_significance"]), line_dash="dash",
                       line_color="#9a6700",
                       annotation_text=f"significatif dès T = "
                                       f"{r['t_days_for_significance']:,} j")
-    fig.add_vline(x=int(days), line_dash="dot", line_color="#57606a",
-                  annotation_text="T actuel")
+    fig.add_vline(x=math.log10(max(int(days), 1)), line_dash="dot",
+                  line_color="#57606a", annotation_text="T actuel")
     fig.update_layout(height=320, margin=dict(l=45, r=15, t=8, b=35),
-                      xaxis=dict(type="log", title="Jours d'observation T (log)"),
+                      xaxis=dict(type="log", title="Jours d'observation T (log)",
+                                 range=[math.log10(ts[0]), math.log10(ts[-1])]),
                       yaxis_title="Sharpe annualisé",
                       legend=dict(orientation="h", y=1.12, font=dict(size=10)),
                       **_LAYOUT)
