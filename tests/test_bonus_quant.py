@@ -73,3 +73,25 @@ def test_naked_seller_keeps_premium_when_otm():
     pnl = delta_hedge_pnl(S0, 140.0, SIG, T, R, B, "C", n_paths=4000,
                           rebalance_steps=0, seed=12)
     assert np.median(pnl) > 0
+
+
+def test_transaction_costs_hurt_frequent_hedger():
+    free = delta_hedge_pnl(S0, K, SIG, T, R, B, "C", n_paths=4000,
+                           rebalance_steps=1, seed=13, tc_bps=0)
+    costly = delta_hedge_pnl(S0, K, SIG, T, R, B, "C", n_paths=4000,
+                             rebalance_steps=1, seed=13, tc_bps=20)
+    # Mêmes chemins (même seed) → les coûts ne font que retrancher
+    assert costly.mean() < free.mean() - 0.05
+
+
+def test_vol_seller_pnl_sign_follows_implied_minus_realized():
+    # Le monde réalise MOINS de vol que l'implicite vendue → le vendeur hedgé gagne
+    win = delta_hedge_pnl(S0, K, SIG, T, R, B, "C", n_paths=6000,
+                          rebalance_steps=1, seed=14, sigma_realized=SIG - 0.05)
+    # Le monde réalise PLUS de vol → il perd
+    lose = delta_hedge_pnl(S0, K, SIG, T, R, B, "C", n_paths=6000,
+                           rebalance_steps=1, seed=14, sigma_realized=SIG + 0.05)
+    assert win.mean() > 0.1
+    assert lose.mean() < -0.1
+    # et l'ordre de grandeur ≈ vega·Δσ (vega ATM ≈ 0.4·S·√T·0.01 ≈ 0.28 €/pt → ~1.4 €)
+    assert 0.5 < win.mean() < 3.0

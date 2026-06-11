@@ -265,17 +265,23 @@ def delta_hedge_pnl(s0: float, strike: float, sigma: float, maturity: float,
                     rate: float, carry: float, right: str = "C",
                     n_paths: int = 4000, rebalance_steps: int = 1,
                     seed: Optional[int] = 42, method: str = "pseudo",
-                    n_steps: Optional[int] = None) -> np.ndarray:
+                    n_steps: Optional[int] = None,
+                    tc_bps: float = 0.0,
+                    sigma_realized: Optional[float] = None) -> np.ndarray:
     """
     LA démonstration Black-Scholes : on VEND la vanille au prix Black, on delta-hedge
     discrètement le long de chaque chemin, et on regarde le P&L final.
 
-    Si le monde suit le modèle (même σ), le P&L est centré sur 0 et son écart-type
-    décroît en ~1/√(fréquence de rebalancement) : le prix de l'option EST le coût de
-    sa couverture. rebalance_steps = pas entre deux rebalancements sur la grille
-    quotidienne (1 = quotidien, 5 = hebdo, 0 = AUCUNE couverture — vente nue).
+    Version DESK — deux frictions du monde réel :
+      • tc_bps : coût de transaction en points de base sur CHAQUE rebalancement
+        (|Δdelta|·S·bps). Hedger plus souvent réduit l'erreur de réplication mais
+        PAIE plus de coûts → il existe une fréquence optimale.
+      • sigma_realized : le monde RÉALISE cette vol, le trader price et hedge à
+        `sigma` (l'implicite). P&L ≈ vega·(σ_impl − σ_real) + bruit — le P&L de
+        gamma trading : vendre de la vol rapporte ssi l'implicite > la réalisée.
 
-    Retourne le P&L ACTUALISÉ par chemin (vendeur hedgé : prime + hedge − payoff).
+    rebalance_steps = pas entre rebalancements (1 = quotidien, 5 = hebdo,
+    0 = vente nue). Retourne le P&L ACTUALISÉ par chemin.
     """
     from src.pricing.european import bs_price
 
@@ -283,8 +289,10 @@ def delta_hedge_pnl(s0: float, strike: float, sigma: float, maturity: float,
     dt = maturity / n_steps
     is_call = right.upper().startswith("C")
     q = rate - carry                                     # rendement du sous-jacent détenu
+    sig_world = sigma_realized if sigma_realized is not None else sigma
 
-    paths = simulate_gbm_paths(s0, sigma, maturity, carry, n_paths, n_steps,
+    # Le MONDE évolue à σ_réalisée ; le trader price/hedge à σ implicite.
+    paths = simulate_gbm_paths(s0, sig_world, maturity, carry, n_paths, n_steps,
                                seed, method, antithetic=(method != "sobol"))
     premium = bs_price(s0 * math.exp(carry * maturity), strike, sigma, maturity,
                        rate, "C" if is_call else "P")
@@ -301,11 +309,13 @@ def delta_hedge_pnl(s0: float, strike: float, sigma: float, maturity: float,
         df_ = math.exp(-rate * tau)
         return df_ * norm.cdf(d1v) if is_call else -df_ * norm.cdf(-d1v)
 
+    tc = tc_bps / 10_000.0
     if rebalance_steps and rebalance_steps > 0:
         delta = hedge_ratio(paths[:, 0], maturity)
     else:
         delta = np.zeros(n_paths)                        # vente nue
     cash = premium - delta * paths[:, 0]
+    cash -= np.abs(delta) * paths[:, 0] * tc             # coût d'entrée du hedge initial
 
     growth, div = math.exp(rate * dt), math.exp(q * dt) - 1.0
     for i in range(1, n_steps + 1):
@@ -314,10 +324,12 @@ def delta_hedge_pnl(s0: float, strike: float, sigma: float, maturity: float,
         if rebalance_steps and i % rebalance_steps == 0 and i < n_steps:
             new_delta = hedge_ratio(s_i, maturity - i * dt)
             cash -= (new_delta - delta) * s_i            # on ajuste la couverture
+            cash -= np.abs(new_delta - delta) * s_i * tc  # friction sur le tour
             delta = new_delta
 
     s_t = paths[:, -1]
     payoff = np.maximum(s_t - strike, 0.0) if is_call else np.maximum(strike - s_t, 0.0)
+    cash -= np.abs(delta) * s_t * tc                     # débouclage final du hedge
     pnl_t = cash + delta * s_t - payoff
     return pnl_t * math.exp(-rate * maturity)
 

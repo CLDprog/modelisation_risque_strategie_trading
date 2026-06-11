@@ -73,6 +73,45 @@ layout = dbc.Container([
         ], className="card h-100"), width=5),
     ], className="g-2 mb-3"),
 
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Historique du signal — indice de variance 30j par cycle "
+                           "(table variance_history, append-only)"),
+            dbc.CardBody(dcc.Graph(id="vs-hist-fig", config={"displayModeBar": False}),
+                         className="p-2"),
+        ], className="card h-100"), width=6),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Strip EXÉCUTABLE — la grille réelle au bid/ask (tranche ~30j)"),
+            dbc.CardBody([
+                html.Div(id="vs-exec-metrics", className="mb-2"),
+                dash_table.DataTable(
+                    id="vs-exec-table",
+                    columns=[
+                        {"name": "Strike", "id": "strike", "type": "numeric",
+                         "format": {"specifier": ",.0f"}},
+                        {"name": "OTM", "id": "right"},
+                        {"name": "Bid", "id": "bid", "type": "numeric",
+                         "format": {"specifier": ".2f"}},
+                        {"name": "Ask", "id": "ask", "type": "numeric",
+                         "format": {"specifier": ".2f"}},
+                        {"name": "Poids ΔK/K²", "id": "weight", "type": "numeric",
+                         "format": {"specifier": ".3g"}},
+                        {"name": "Contrib. (bp var)", "id": "contrib", "type": "numeric",
+                         "format": {"specifier": ".1f"}},
+                    ],
+                    style_header={"textTransform": "none"},
+                    style_table={"overflowX": "auto"},
+                    style_cell={"textAlign": "center", "padding": "3px", "fontSize": "12px"},
+                ),
+                html.Small("Le strip théorique (SVI, 400 strikes) donne la juste valeur ; "
+                           "le strip exécutable (notre grille de ~5 strikes, prix réels) "
+                           "donne ce qu'on PAIE en croisant le spread — l'écart mid↔exécutable "
+                           "= coût de réplication + erreur de troncature de la grille.",
+                           className="text-muted d-block mt-1"),
+            ], className="p-2"),
+        ], className="card h-100"), width=6),
+    ], className="g-2 mb-3"),
+
     dbc.Card([
         dbc.CardHeader("Détail par maturité"),
         dbc.CardBody(dash_table.DataTable(
@@ -174,6 +213,84 @@ def refresh_varswap(_, symbol):
              "n_strikes": r.n_strikes} for r in term]
 
     return metrics, fig_term, fig_strip, rows
+
+
+@callback(
+    Output("vs-hist-fig",     "figure"),
+    Output("vs-exec-metrics", "children"),
+    Output("vs-exec-table",   "data"),
+    Input("vs-interval",      "n_intervals"),
+    Input("selected-symbol",  "data"),
+)
+def refresh_desk_extras(_, symbol):
+    import math as _m
+    sym = symbol or "ESTX50"
+
+    # Historique du signal (se remplit à chaque cycle du collecteur)
+    hist = datasource.get_variance_history(sym, days=7)
+    fig_h = go.Figure()
+    if not hist.empty:
+        fig_h.add_trace(go.Scatter(
+            x=hist["ts"], y=hist["var_index_30d"], mode="lines+markers",
+            line=dict(color="#0969da", width=2), marker=dict(size=6)))
+        fig_h.update_yaxes(title="Indice 30j (pts de vol)")
+    else:
+        fig_h.add_annotation(x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
+                             text="L'historique se remplit à chaque cycle du collecteur",
+                             font=dict(size=12, color="#57606a"))
+    fig_h.update_layout(height=300, margin=dict(l=45, r=15, t=8, b=35),
+                        xaxis_title="Cycle (UTC)", **_LAYOUT)
+
+    # Strip EXÉCUTABLE : la vraie grille (~5 strikes) au bid/ask, tranche ~30j
+    rate = 0.025
+    try:
+        from src.utils.config import load_config
+        rate = load_config("pricing").get("risk_free_rate", {}).get("value", 0.025)
+    except Exception:
+        pass
+    chain = datasource.get_option_chain(sym)
+    rows, metrics = [], None
+    if not chain.empty and "days_to_expiry" in chain.columns:
+        u = chain[chain["is_usable"]] if "is_usable" in chain.columns else chain
+        u = u.dropna(subset=["strike", "forward", "maturity_years"])
+        if not u.empty:
+            nearest = u.loc[(u["days_to_expiry"] - 30).abs().idxmin(), "days_to_expiry"]
+            sl = u[u["days_to_expiry"] == nearest]
+            fwd = float(sl["forward"].iloc[0])
+            T = float(sl["maturity_years"].iloc[0])
+            # options OTM : put sous F, call au-dessus — une ligne par strike
+            otm = sl[((sl["right"] == "P") & (sl["strike"] < fwd)) |
+                     ((sl["right"] == "C") & (sl["strike"] >= fwd))]
+            otm = otm.sort_values("strike").drop_duplicates(subset="strike")
+            if len(otm) >= 3:
+                ks = otm["strike"].to_numpy(dtype=float)
+                dk = np.empty_like(ks)
+                dk[1:-1] = (ks[2:] - ks[:-2]) / 2
+                dk[0], dk[-1] = ks[1] - ks[0], ks[-1] - ks[-2]
+                wgt = (2 * _m.exp(rate * T) / T) * dk / ks ** 2
+                k0 = ks[max(int(np.searchsorted(ks, fwd)) - 1, 0)]
+                adj = (fwd / k0 - 1.0) ** 2 / T
+
+                def kvar(prices):
+                    v = float(np.nansum(wgt * prices) - adj)
+                    return 100 * _m.sqrt(max(v, 1e-10))
+
+                mid = otm["mid_price"].to_numpy(dtype=float)
+                bid = otm["bid"].to_numpy(dtype=float)
+                ask = otm["ask"].to_numpy(dtype=float)
+                kv_mid, kv_buy, kv_sell = kvar(mid), kvar(ask), kvar(bid)
+                metrics = [
+                    dbc.Badge(f"K_var mid : {kv_mid:.2f}", color="info", className="me-2"),
+                    dbc.Badge(f"acheter (ask) : {kv_buy:.2f}", color="danger", className="me-2"),
+                    dbc.Badge(f"vendre (bid) : {kv_sell:.2f}", color="success", className="me-2"),
+                    dbc.Badge(f"spread : {kv_buy - kv_sell:.2f} pts", color="secondary"),
+                ]
+                for i, (_, r) in enumerate(otm.iterrows()):
+                    rows.append({"strike": r["strike"], "right": r["right"],
+                                 "bid": r.get("bid"), "ask": r.get("ask"),
+                                 "weight": float(wgt[i]),
+                                 "contrib": float(wgt[i] * (r.get("mid_price") or 0)) * 1e4})
+    return fig_h, metrics, rows
 
 
 @callback(

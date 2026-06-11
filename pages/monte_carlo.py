@@ -132,13 +132,31 @@ layout = dbc.Container([
                 dbc.CardHeader("Simulateur de DELTA-HEDGE (vanille européenne, mêmes "
                                "S/K/σ/T) — « le prix d'une option est le coût de son hedge »"),
                 dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([
+                            html.Label("Coûts de transaction (bps par rebalancement)",
+                                       className="text-muted small"),
+                            dcc.Slider(id="mc-hedge-tc", min=0, max=20, step=1, value=0,
+                                       marks={i: str(i) for i in (0, 5, 10, 20)},
+                                       tooltip={"placement": "bottom"}),
+                        ], width=6),
+                        dbc.Col([
+                            html.Label("Vol RÉALISÉE − vol implicite (pts) — le pari du "
+                                       "vendeur de vol", className="text-muted small"),
+                            dcc.Slider(id="mc-hedge-dvol", min=-10, max=10, step=1, value=0,
+                                       marks={i: f"{i:+d}" for i in (-10, -5, 0, 5, 10)},
+                                       tooltip={"placement": "bottom"}),
+                        ], width=6),
+                    ], className="mb-1"),
                     dcc.Graph(id="mc-hedge-fig", config={"displayModeBar": False}),
                     html.Div(id="mc-hedge-stats", className="mt-1"),
-                    html.Small("On VEND la vanille au prix Black puis on delta-hedge le long "
-                               "de chaque chemin. Sans couverture : P&L dispersé et asymétrique. "
-                               "Hedgé : centré sur 0, et l'écart-type se resserre en "
-                               "~1/√(fréquence) — la démonstration empirique de Black-Scholes.",
-                               className="text-muted"),
+                    html.Small("On VEND au prix Black (σ implicite) puis on delta-hedge le "
+                               "long de chemins qui réalisent σ_réelle. Les deux leçons desk : "
+                               "(1) hedger plus souvent réduit l'erreur mais PAIE des coûts — "
+                               "il existe une fréquence optimale ; (2) le P&L espéré du vendeur "
+                               "hedgé ≈ vega·(σ_implicite − σ_réalisée) : on gagne de l'argent "
+                               "en vendant la vol PLUS CHER qu'elle ne se réalise, pas en "
+                               "devinant la direction.", className="text-muted"),
                 ], className="p-2"),
             ], className="card"), width=12),
         ], className="g-2 mb-3"),
@@ -349,11 +367,13 @@ def run_mc(_clicks, symbol, months, strike_pct, right, fixing, method, n_paths):
     Output("mc-hedge-stats", "children"),
     Input("mc-run",          "n_clicks"),
     Input("selected-symbol", "data"),
+    Input("mc-hedge-tc",     "value"),
+    Input("mc-hedge-dvol",   "value"),
     State("mc-months",       "value"),
     State("mc-strike-pct",   "value"),
     State("mc-right",        "value"),
 )
-def run_hedge(_clicks, symbol, months, strike_pct, right):
+def run_hedge(_clicks, symbol, tc_bps, dvol, months, strike_pct, right):
     from src.pricing.monte_carlo import delta_hedge_pnl
     sym = symbol or "ESTX50"
     T = (months or 12) / 12.0
@@ -364,6 +384,7 @@ def run_hedge(_clicks, symbol, months, strike_pct, right):
     strike = round(spot * (strike_pct or 100) / 100.0, 2)
     # Carry constant équivalent (pour le hedge, le carry moyen suffit)
     b = math.log(float(fcurve(np.array([T]))[0]) / spot) / T
+    sig_real = max(sigma + (dvol or 0) / 100.0, 0.01)
 
     configs = [("Sans couverture", 0, "#cf222e"),
                ("Hedge hebdomadaire", 5, "#bc4c00"),
@@ -371,20 +392,22 @@ def run_hedge(_clicks, symbol, months, strike_pct, right):
     stats = []
     for name, every, color in configs:
         pnl = delta_hedge_pnl(spot, strike, sigma, T, rate, b, right or "C",
-                              n_paths=4000, rebalance_steps=every, seed=42)
+                              n_paths=4000, rebalance_steps=every, seed=42,
+                              tc_bps=tc_bps or 0.0, sigma_realized=sig_real)
         fig.add_trace(go.Histogram(x=pnl, nbinsx=120, name=name, opacity=0.6,
                                    marker_color=color))
-        stats.append((name, float(pnl.mean()), float(pnl.std(ddof=1))))
+        stats.append((name, float(pnl.mean()), float(pnl.std(ddof=1)),
+                      float(np.percentile(pnl, 5))))
     fig.add_vline(x=0, line_dash="dash", line_color="#57606a")
     fig.update_layout(height=300, margin=dict(l=45, r=15, t=8, b=35), barmode="overlay",
                       xaxis_title="P&L du vendeur hedgé (€, actualisé)",
                       yaxis_title="Fréquence",
                       legend=dict(orientation="h", y=1.12, font=dict(size=10)),
                       **_LAYOUT)
-    badges = [dbc.Badge(f"{n} : moy {m:+,.1f} € · σ {s:,.1f} €",
-                        color=("danger" if "Sans" in n else
-                               "warning" if "hebdo" in n else "success"),
-                        className="me-2") for n, m, s in stats]
+    badges = [dbc.Badge(
+        f"{n} : moy {m:+,.1f} € · σ {s:,.1f} € · VaR95 {v:,.1f} €",
+        color=("danger" if "Sans" in n else "warning" if "hebdo" in n else "success"),
+        className="me-2") for n, m, s, v in stats]
     return fig, badges
 
 

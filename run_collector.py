@@ -676,8 +676,58 @@ class Collector:
                                  session_date, atomic=True, version=run_id)
                 logger.info(f"  dispersion : {len(disp)} tenors "
                             f"(ρ̄ ~ {disp['implied_correlation'].mean():.2f})")
+                # Historique APPEND-ONLY du signal (le desk track ses niveaux d'entrée)
+                hist = disp[["tenor_days", "implied_correlation", "index_iv",
+                             "basket_avg_iv"]].copy()
+                hist["ts"] = datetime.now(timezone.utc).isoformat()
+                hist["run_id"] = run_id
+                self.raw_store.append("dispersion_history", hist, session_date)
         except Exception as exc:
             logger.warning(f"dispersion (Eq.23) : {exc}")
+
+        # Signal desk : strikes de variance swap + indice 30j par sous-jacent
+        # (réplication log-contrat sur la surface SVI) → table variance_term
+        # + historique append-only variance_history (bonus mini-VSTOXX).
+        try:
+            from src.pricing.varswap import (variance_term_structure,
+                                             interpolate_variance_index)
+            vt_rows, vh_rows = [], []
+            now_iso = datetime.now(timezone.utc).isoformat()
+            fcol = "underlying" if (not fwd_all.empty and "underlying" in fwd_all.columns) \
+                else "underlying_symbol"
+            for sym, surf in surfaces.items():
+                pdf = surface_params_to_dataframe(surf)
+                fsub = fwd_all[fwd_all[fcol] == sym] if not fwd_all.empty else fwd_all
+                term = variance_term_structure(pdf, fsub, self.rate)
+                if not term:
+                    continue
+                for tr in term:
+                    vt_rows.append({
+                        "underlying": sym, "expiry": tr.expiry,
+                        "maturity_years": tr.maturity_years, "forward": tr.forward,
+                        "var_strike": tr.var_strike, "vol_strike": tr.vol_strike,
+                        "atm_vol": tr.atm_vol,
+                        "convexity_premium": tr.convexity_premium,
+                        "snapshot_ts": now_iso,
+                    })
+                idx = interpolate_variance_index(term, 30)
+                if idx:
+                    vh_rows.append({"ts": now_iso, "run_id": run_id, "underlying": sym,
+                                    "var_index_30d": idx["index"],
+                                    "clamped": idx["clamped"]})
+            if vt_rows:
+                self.store.write("variance_term",
+                                 self._add_lineage(pd.DataFrame(vt_rows), run_id),
+                                 session_date, atomic=True, version=run_id)
+            if vh_rows:
+                self.raw_store.append("variance_history", pd.DataFrame(vh_rows),
+                                      session_date)
+                estx = next((r["var_index_30d"] for r in vh_rows
+                             if r["underlying"] == "ESTX50"), None)
+                if estx:
+                    logger.info(f"  mini-VSTOXX 30j : {estx:.2f}")
+        except Exception as exc:
+            logger.warning(f"variance swap (bonus) : {exc}")
 
         # Portefeuille / risk / scénarios
         try:

@@ -71,6 +71,19 @@ layout = dbc.Container([
         ], className="card h-100"), width=7),
     ], className="g-2 mb-3"),
 
+    dbc.Row([
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Historique du signal — ρ̄ implicite par cycle "
+                           "(table dispersion_history, append-only)"),
+            dbc.CardBody(dcc.Graph(id="dt-hist-fig", config={"displayModeBar": False}),
+                         className="p-2"),
+        ], className="card h-100"), width=6),
+        dbc.Col(dbc.Card([
+            dbc.CardHeader("Risque & coûts du package (vega-flat par construction)"),
+            dbc.CardBody(html.Div(id="dt-risk-panel"), className="p-2"),
+        ], className="card h-100"), width=6),
+    ], className="g-2 mb-3"),
+
     dbc.Card([
         dbc.CardHeader("Construction du panier (jambe composantes, vega-weighted, "
                        "poids Eq.23)"),
@@ -111,23 +124,39 @@ def _trade_data(tenor: int):
     row = disp[disp["tenor_days"] == tenor].iloc[0]
 
     iv = datasource._read_analytics("iv_points")
-    comp = {}
-    vega_eur = {}
+    comp, atm = {}, {}
+
+    def _atm_row(grp):
+        """Ligne ATM la plus proche du tenor : vega/gamma/theta € + demi-spread."""
+        g = grp.dropna(subset=["eur_vega", "log_moneyness", "days_to_expiry"])
+        if g.empty:
+            return None
+        nearest = g.loc[(g["days_to_expiry"] - tenor).abs().idxmin(), "days_to_expiry"]
+        sl = g[g["days_to_expiry"] == nearest]
+        r = sl.loc[sl["log_moneyness"].abs().idxmin()]
+        half = None
+        if pd.notna(r.get("bid")) and pd.notna(r.get("ask")):
+            half = (float(r["ask"]) - float(r["bid"])) / 2 * float(r.get("multiplier", 100))
+        return {"vega": float(r["eur_vega"]),
+                "gamma": float(r.get("eur_gamma") or 0),
+                "theta": float(r.get("eur_theta") or 0),
+                "half_spread": half}
+
     if not iv.empty:
         for sym, grp in iv.groupby("underlying_symbol"):
             if sym == "ESTX50":
+                idx_atm = _atm_row(grp)
+                if idx_atm:
+                    atm["ESTX50"] = idx_atm
                 continue
             ivs = _atm_iv_by_tenor(grp, [tenor])
             if tenor not in ivs:
                 continue
             comp[sym] = ivs[tenor]
-            # vega € du contrat ATM le plus proche de ce tenor
-            g = grp.dropna(subset=["eur_vega", "log_moneyness", "days_to_expiry"])
-            if not g.empty:
-                nearest = g.loc[(g["days_to_expiry"] - tenor).abs().idxmin(), "days_to_expiry"]
-                sl = g[g["days_to_expiry"] == nearest]
-                vega_eur[sym] = float(sl.loc[sl["log_moneyness"].abs().idxmin(), "eur_vega"])
-    if len(comp) < 5:
+            a = _atm_row(grp)
+            if a:
+                atm[sym] = a
+    if len(comp) < 5 or "ESTX50" not in atm:
         return None
 
     syms = sorted(comp)
@@ -136,7 +165,7 @@ def _trade_data(tenor: int):
     s2 = float(np.sum((w * vols) ** 2))
     avg = float(np.sum(w * vols))
     return {"row": row, "syms": syms, "vols": vols, "w": w, "s2": s2, "avg": avg,
-            "vega_eur": vega_eur,
+            "atm": atm,
             "rho_entry": float(row["implied_correlation"]),
             "index_iv": float(row["index_iv"])}
 
@@ -161,17 +190,20 @@ def init_tenors(_):
     Output("dt-rho-fig",      "figure"),
     Output("dt-pnl-fig",      "figure"),
     Output("dt-basket-table", "data"),
+    Output("dt-hist-fig",     "figure"),
+    Output("dt-risk-panel",   "children"),
     Input("dt-tenor",         "value"),
     Input("dt-vega",          "value"),
 )
 def refresh_trade(tenor, vega_notional):
     empty = go.Figure()
     if not tenor:
-        return [dbc.Col(no_data_alert("ESTX50"), width=12)], empty, empty, []
+        return [dbc.Col(no_data_alert("ESTX50"), width=12)], empty, empty, [], empty, None
     data = _trade_data(int(tenor))
     if data is None:
-        return [dbc.Col(dbc.Alert("Pas assez de composantes à ce tenor.",
-                                  color="warning"), width=12)], empty, empty, []
+        return ([dbc.Col(dbc.Alert("Pas assez de composantes à ce tenor.",
+                                   color="warning"), width=12)],
+                empty, empty, [], empty, None)
 
     vega = float(vega_notional or 2000)
     rho0, sig_i = data["rho_entry"], data["index_iv"]
@@ -217,18 +249,69 @@ def refresh_trade(tenor, vega_notional):
                           xaxis_title="Corrélation réalisée ρ",
                           yaxis_title=f"P&L (€) — vega {vega:,.0f} €/pt", **_LAYOUT)
 
-    # 3) Panier vega-weighted
+    # 3) Panier vega-weighted + greeks/coûts du package
     rows = []
+    pkg = {"gamma": 0.0, "theta": 0.0, "cost": 0.0, "n_spread": 0}
     for s, v, wi in zip(data["syms"], data["vols"], data["w"]):
         vt = vega * wi * v / data["avg"]          # répartition vega ∝ w·σ (poids Eq.23)
-        vpc = data["vega_eur"].get(s)
+        a = data["atm"].get(s)
+        vpc = a["vega"] if a else None
+        contracts = (vt / vpc) if vpc else None
         rows.append({"symbol": s, "iv": v * 100, "weight": wi,
                      "vega_target": vt,
                      "vega_per_contract": vpc,
-                     "contracts": (vt / vpc) if vpc else None})
+                     "contracts": contracts})
+        if a and contracts:
+            scale = contracts
+            pkg["gamma"] += scale * a["gamma"]
+            pkg["theta"] += scale * a["theta"]
+            if a["half_spread"] is not None:
+                pkg["cost"] += abs(scale) * a["half_spread"]
+                pkg["n_spread"] += 1
     rows.sort(key=lambda r: -(r["vega_target"] or 0))
 
-    return metrics, fig_rho, fig_pnl, rows
+    # Jambe indice (SHORT vega notional)
+    ia = data["atm"]["ESTX50"]
+    idx_contracts = vega / ia["vega"] if ia["vega"] else 0.0
+    pkg["gamma"] -= idx_contracts * ia["gamma"]
+    pkg["theta"] -= idx_contracts * ia["theta"]
+    if ia["half_spread"] is not None:
+        pkg["cost"] += idx_contracts * ia["half_spread"]
+        pkg["n_spread"] += 1
+    breakeven_shift = pkg["cost"] / corr_vega if corr_vega else 0.0
+
+    # 4) Historique de ρ̄ (append-only, par cycle)
+    hist = datasource.get_dispersion_history(days=7)
+    fig_hist = go.Figure()
+    if not hist.empty and "tenor_days" in hist.columns:
+        h = hist[hist["tenor_days"] == int(tenor)]
+        if not h.empty:
+            fig_hist.add_trace(go.Scatter(
+                x=h["ts"], y=h["implied_correlation"], mode="lines+markers",
+                line=dict(color="#0969da", width=2), marker=dict(size=6)))
+            fig_hist.add_hline(y=rho0, line_dash="dot", line_color="#cf222e",
+                               annotation_text="niveau actuel")
+    if not fig_hist.data:
+        fig_hist.add_annotation(x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
+                                text="L'historique se remplit à chaque cycle du collecteur",
+                                font=dict(size=12, color="#57606a"))
+    fig_hist.update_layout(height=280, margin=dict(l=45, r=15, t=8, b=35),
+                           xaxis_title="Cycle (UTC)",
+                           yaxis=dict(title="ρ̄", range=[0, 1]), **_LAYOUT)
+
+    # 5) Panneau risque & coûts
+    risk_panel = dbc.Row([
+        dbc.Col(_mb("≈ 0 €/pt", "Vega net (par construction)", "positive"), width=6),
+        dbc.Col(_mb(f"{pkg['gamma']:+,.0f} €", "Gamma € net du package",
+                    "positive" if pkg["gamma"] >= 0 else "negative"), width=6),
+        dbc.Col(_mb(f"{pkg['theta']:+,.0f} €/j", "Theta € net du package",
+                    "positive" if pkg["theta"] >= 0 else "negative"), width=6),
+        dbc.Col(_mb(f"{pkg['cost']:,.0f} € · ρ̄ +{breakeven_shift:.3f}",
+                    f"Coût d'entrée (½ spread, {pkg['n_spread']} jambes) · "
+                    "décalage du breakeven", "warning"), width=6),
+    ], className="g-2")
+
+    return metrics, fig_rho, fig_pnl, rows, fig_hist, risk_panel
 
 
 def _mb(value, label, css=""):

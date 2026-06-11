@@ -263,6 +263,40 @@ class DataSource:
         """Diagnostics de dispersion indice vs composantes (Eq.23, corrélation implicite)."""
         return self._read_analytics("dispersion_diagnostics")
 
+    def get_variance_term(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Strikes de variance swap par maturité (réplication log-contrat sur SVI)."""
+        return self._read_for_symbol("variance_term", symbol)
+
+    def _read_raw_history(self, table: str, days: int = 7) -> pd.DataFrame:
+        """Lit une table APPEND-ONLY de la couche brute sur les N derniers jours
+        (historiques de signaux desk : variance_history, dispersion_history)."""
+        from datetime import timedelta
+        from src.storage.schemas import ParquetStore
+        store = ParquetStore(_DATA_DIR / "raw")
+        frames = []
+        for d in range(days):
+            dt = date.today() - timedelta(days=d)
+            if store.partition_exists(table, dt):       # évite le WARNING par jour vide
+                df = store.read(table, dt)
+                if not df.empty:
+                    frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def get_variance_history(self, symbol: Optional[str] = None,
+                             days: int = 7) -> pd.DataFrame:
+        """Historique de l'indice de variance 30j (mini-VSTOXX) par cycle."""
+        df = self._read_raw_history("variance_history", days)
+        if df.empty:
+            return df
+        if symbol and "underlying" in df.columns:
+            df = df[df["underlying"] == (symbol or "").upper()]
+        return df.sort_values("ts") if "ts" in df.columns else df
+
+    def get_dispersion_history(self, days: int = 7) -> pd.DataFrame:
+        """Historique de la corrélation implicite ρ̄ par tenor, par cycle."""
+        df = self._read_raw_history("dispersion_history", days)
+        return df.sort_values("ts") if not df.empty and "ts" in df.columns else df
+
     def get_scenarios(self, symbol: Optional[str] = None) -> pd.DataFrame:
         sym = (symbol or self._selected_symbol).upper()
         df = self._read_analytics("scenario_results")
