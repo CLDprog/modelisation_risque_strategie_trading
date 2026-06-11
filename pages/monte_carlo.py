@@ -389,18 +389,39 @@ def run_hedge(_clicks, symbol, tc_bps, dvol, months, strike_pct, right):
     configs = [("Sans couverture", 0, "#cf222e"),
                ("Hedge hebdomadaire", 5, "#bc4c00"),
                ("Hedge quotidien", 1, "#1a7f37")]
-    stats = []
+    stats, pnls = [], {}
     for name, every, color in configs:
         pnl = delta_hedge_pnl(spot, strike, sigma, T, rate, b, right or "C",
                               n_paths=4000, rebalance_steps=every, seed=42,
                               tc_bps=tc_bps or 0.0, sigma_realized=sig_real)
-        fig.add_trace(go.Histogram(x=pnl, nbinsx=120, name=name, opacity=0.6,
-                                   marker_color=color))
+        pnls[name] = (pnl, color)
         stats.append((name, float(pnl.mean()), float(pnl.std(ddof=1)),
                       float(np.percentile(pnl, 5))))
+
+    # ÉCHELLE : la queue de la vente nue (plusieurs milliers d'€) écraserait les
+    # distributions hedgées, et des bins par trace rendraient les hauteurs non
+    # comparables. → fenêtre cadrée sur les distributions HEDGÉES (+ le pic de
+    # prime de la vente nue), bins COMMUNS, queue tronquée annoncée.
+    hedged = np.concatenate([pnls["Hedge hebdomadaire"][0], pnls["Hedge quotidien"][0]])
+    naked = pnls["Sans couverture"][0]
+    lo = float(np.percentile(hedged, 0.5))
+    hi = float(max(np.percentile(hedged, 99.5), naked.max()))
+    pad = 0.06 * (hi - lo)
+    lo, hi = lo - pad, hi + pad
+    xbins = dict(start=lo, end=hi, size=(hi - lo) / 120)
+    for name, (pnl, color) in pnls.items():
+        fig.add_trace(go.Histogram(x=pnl, xbins=xbins, autobinx=False, name=name,
+                                   opacity=0.6, marker_color=color))
+    n_out = int((naked < lo).sum())
+    if n_out:
+        fig.add_annotation(x=0.02, y=0.95, xref="paper", yref="paper", showarrow=False,
+                           xanchor="left", font=dict(size=11, color="#cf222e"),
+                           text=f"← vente nue : {n_out} chemins ({n_out/len(naked):.0%}) "
+                                f"hors cadre, jusqu'à {naked.min():,.0f} €")
     fig.add_vline(x=0, line_dash="dash", line_color="#57606a")
     fig.update_layout(height=300, margin=dict(l=45, r=15, t=8, b=35), barmode="overlay",
-                      xaxis_title="P&L du vendeur hedgé (€, actualisé)",
+                      xaxis=dict(title="P&L du vendeur hedgé (€, actualisé)",
+                                 range=[lo, hi]),
                       yaxis_title="Fréquence",
                       legend=dict(orientation="h", y=1.12, font=dict(size=10)),
                       **_LAYOUT)
