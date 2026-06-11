@@ -55,3 +55,47 @@ def test_put_call_consistency():
 
 def test_degenerate_maturity_returns_intrinsic():
     assert geometric_asian_closed_form(110, 100, 0.2, 0.0, 0.02, 0.0, "C", 12) == 10.0
+
+
+# ── Version desk : Sobol, greeks CRN, ladder, courbe forward ───────────────
+
+def test_sobol_agrees_with_pseudo():
+    ps = price_asian_mc(S0, K, SIGMA, T, R, B, "C", n_paths=30_000, n_steps=52,
+                        seed=7, method="pseudo")
+    qs = price_asian_mc(S0, K, SIGMA, T, R, B, "C", n_paths=30_000, n_steps=52,
+                        seed=7, method="sobol")
+    assert abs(ps.price - qs.price) < 4 * (ps.std_error + qs.std_error) + 0.02
+
+
+def test_greeks_sane():
+    res = price_asian_mc(S0, K, SIGMA, T, R, B, "C", n_paths=30_000, n_steps=52,
+                         seed=8, compute_greeks=True)
+    assert 0.0 < res.delta < 1.0          # call ATM ~0.5-0.6
+    assert res.gamma > 0                  # long option = long convexité
+    assert res.vega > 0                   # par 1 pt de vol
+    assert res.theta is not None and res.theta < 0   # le temps coûte
+    put = price_asian_mc(S0, K, SIGMA, T, R, B, "P", n_paths=30_000, n_steps=52,
+                         seed=8, compute_greeks=True)
+    assert -1.0 < put.delta < 0.0
+
+
+def test_forward_curve_drift_matches_market_points():
+    # Drift calé sur une courbe forward arbitraire → E[S_t] doit retomber dessus.
+    def fcurve(t):
+        return S0 * np.exp(0.03 * np.atleast_1d(t))   # b = 3% via la courbe
+    paths = simulate_gbm_paths(S0, SIGMA, T, 0.0, 50_000, 52, seed=9,
+                               forward_curve=fcurve)
+    f_mc = paths[:, -1].mean()
+    se = paths[:, -1].std(ddof=1) / math.sqrt(len(paths))
+    assert abs(f_mc - float(fcurve(T)[0])) < 4 * se
+
+
+def test_strike_ladder_consistency():
+    from src.pricing.monte_carlo import strike_ladder
+    res = price_asian_mc(S0, K, SIGMA, T, R, B, "C", n_paths=30_000, n_steps=52, seed=10)
+    ladder = strike_ladder(res, [80.0, 90.0, 100.0, 110.0, 120.0])
+    prices = [r["asian_mc"] for r in ladder]
+    assert all(prices[i] > prices[i + 1] for i in range(len(prices) - 1))  # call ↓ en K
+    for r in ladder:                       # arithmétique ≥ géométrique, ≤ européenne
+        assert r["asian_mc"] >= r["geo_cf"] - 4 * r["se"] - 0.02
+        assert r["asian_mc"] <= r["european_bs"] + 4 * r["se"] + 0.02
