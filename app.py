@@ -72,6 +72,10 @@ sidebar = html.Div([
     html.P("BONUS", className="nav-title mt-3"),
     dbc.Nav(
         [dbc.NavLink("Monte Carlo — Asiatique", href="/monte-carlo",
+                     active="exact", className="nav-link"),
+         dbc.NavLink("Variance swap & VSTOXX", href="/varswap",
+                     active="exact", className="nav-link"),
+         dbc.NavLink("Trade de dispersion", href="/dispersion",
                      active="exact", className="nav-link")],
         vertical=True, pills=False,
     ),

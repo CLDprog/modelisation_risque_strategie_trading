@@ -129,6 +129,21 @@ layout = dbc.Container([
         ], className="g-2 mb-3"),
         dbc.Row([
             dbc.Col(dbc.Card([
+                dbc.CardHeader("Simulateur de DELTA-HEDGE (vanille européenne, mêmes "
+                               "S/K/σ/T) — « le prix d'une option est le coût de son hedge »"),
+                dbc.CardBody([
+                    dcc.Graph(id="mc-hedge-fig", config={"displayModeBar": False}),
+                    html.Div(id="mc-hedge-stats", className="mt-1"),
+                    html.Small("On VEND la vanille au prix Black puis on delta-hedge le long "
+                               "de chaque chemin. Sans couverture : P&L dispersé et asymétrique. "
+                               "Hedgé : centré sur 0, et l'écart-type se resserre en "
+                               "~1/√(fréquence) — la démonstration empirique de Black-Scholes.",
+                               className="text-muted"),
+                ], className="p-2"),
+            ], className="card"), width=12),
+        ], className="g-2 mb-3"),
+        dbc.Row([
+            dbc.Col(dbc.Card([
                 dbc.CardHeader("Convergence de l'estimateur — brut vs variate de contrôle"),
                 dbc.CardBody([
                     dcc.Graph(id="mc-conv-fig", config={"displayModeBar": False}),
@@ -327,6 +342,50 @@ def run_mc(_clicks, symbol, months, strike_pct, right, fixing, method, n_paths):
                            **_LAYOUT)
 
     return metrics, greeks, fig_paths, fig_dist, fig_lad, ladder_rows, fig_conv
+
+
+@callback(
+    Output("mc-hedge-fig",   "figure"),
+    Output("mc-hedge-stats", "children"),
+    Input("mc-run",          "n_clicks"),
+    Input("selected-symbol", "data"),
+    State("mc-months",       "value"),
+    State("mc-strike-pct",   "value"),
+    State("mc-right",        "value"),
+)
+def run_hedge(_clicks, symbol, months, strike_pct, right):
+    from src.pricing.monte_carlo import delta_hedge_pnl
+    sym = symbol or "ESTX50"
+    T = (months or 12) / 12.0
+    spot, rate, sigma, fcurve, _ = _infra_inputs(sym, T)
+    fig = go.Figure()
+    if not spot or not sigma:
+        return fig, None
+    strike = round(spot * (strike_pct or 100) / 100.0, 2)
+    # Carry constant équivalent (pour le hedge, le carry moyen suffit)
+    b = math.log(float(fcurve(np.array([T]))[0]) / spot) / T
+
+    configs = [("Sans couverture", 0, "#cf222e"),
+               ("Hedge hebdomadaire", 5, "#bc4c00"),
+               ("Hedge quotidien", 1, "#1a7f37")]
+    stats = []
+    for name, every, color in configs:
+        pnl = delta_hedge_pnl(spot, strike, sigma, T, rate, b, right or "C",
+                              n_paths=4000, rebalance_steps=every, seed=42)
+        fig.add_trace(go.Histogram(x=pnl, nbinsx=120, name=name, opacity=0.6,
+                                   marker_color=color))
+        stats.append((name, float(pnl.mean()), float(pnl.std(ddof=1))))
+    fig.add_vline(x=0, line_dash="dash", line_color="#57606a")
+    fig.update_layout(height=300, margin=dict(l=45, r=15, t=8, b=35), barmode="overlay",
+                      xaxis_title="P&L du vendeur hedgé (€, actualisé)",
+                      yaxis_title="Fréquence",
+                      legend=dict(orientation="h", y=1.12, font=dict(size=10)),
+                      **_LAYOUT)
+    badges = [dbc.Badge(f"{n} : moy {m:+,.1f} € · σ {s:,.1f} €",
+                        color=("danger" if "Sans" in n else
+                               "warning" if "hebdo" in n else "success"),
+                        className="me-2") for n, m, s in stats]
+    return fig, badges
 
 
 def _mb(value, label, css=""):

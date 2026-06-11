@@ -261,6 +261,67 @@ def price_asian_mc(s0: float, strike: float, sigma: float, maturity: float,
     )
 
 
+def delta_hedge_pnl(s0: float, strike: float, sigma: float, maturity: float,
+                    rate: float, carry: float, right: str = "C",
+                    n_paths: int = 4000, rebalance_steps: int = 1,
+                    seed: Optional[int] = 42, method: str = "pseudo",
+                    n_steps: Optional[int] = None) -> np.ndarray:
+    """
+    LA démonstration Black-Scholes : on VEND la vanille au prix Black, on delta-hedge
+    discrètement le long de chaque chemin, et on regarde le P&L final.
+
+    Si le monde suit le modèle (même σ), le P&L est centré sur 0 et son écart-type
+    décroît en ~1/√(fréquence de rebalancement) : le prix de l'option EST le coût de
+    sa couverture. rebalance_steps = pas entre deux rebalancements sur la grille
+    quotidienne (1 = quotidien, 5 = hebdo, 0 = AUCUNE couverture — vente nue).
+
+    Retourne le P&L ACTUALISÉ par chemin (vendeur hedgé : prime + hedge − payoff).
+    """
+    from src.pricing.european import bs_price
+
+    n_steps = n_steps or max(int(252 * maturity), 10)
+    dt = maturity / n_steps
+    is_call = right.upper().startswith("C")
+    q = rate - carry                                     # rendement du sous-jacent détenu
+
+    paths = simulate_gbm_paths(s0, sigma, maturity, carry, n_paths, n_steps,
+                               seed, method, antithetic=(method != "sobol"))
+    premium = bs_price(s0 * math.exp(carry * maturity), strike, sigma, maturity,
+                       rate, "C" if is_call else "P")
+
+    def hedge_ratio(spot_vec: np.ndarray, tau: float) -> np.ndarray:
+        """Delta Black-76 VECTORISÉ (même convention que european.bs_delta :
+        Δ = ±e^{-rτ}·N(±d1)) — la version bouclée coûtait >2 min de simulation."""
+        if tau <= 0 or sigma <= 0:
+            itm = (spot_vec > strike) if is_call else (spot_vec < strike)
+            return np.where(itm, 1.0 if is_call else -1.0, 0.0)
+        fwd = spot_vec * math.exp(carry * tau)
+        sd = sigma * math.sqrt(tau)
+        d1v = (np.log(fwd / strike) + 0.5 * sigma ** 2 * tau) / sd
+        df_ = math.exp(-rate * tau)
+        return df_ * norm.cdf(d1v) if is_call else -df_ * norm.cdf(-d1v)
+
+    if rebalance_steps and rebalance_steps > 0:
+        delta = hedge_ratio(paths[:, 0], maturity)
+    else:
+        delta = np.zeros(n_paths)                        # vente nue
+    cash = premium - delta * paths[:, 0]
+
+    growth, div = math.exp(rate * dt), math.exp(q * dt) - 1.0
+    for i in range(1, n_steps + 1):
+        s_i = paths[:, i]
+        cash = cash * growth + delta * s_i * div         # intérêts + dividendes perçus
+        if rebalance_steps and i % rebalance_steps == 0 and i < n_steps:
+            new_delta = hedge_ratio(s_i, maturity - i * dt)
+            cash -= (new_delta - delta) * s_i            # on ajuste la couverture
+            delta = new_delta
+
+    s_t = paths[:, -1]
+    payoff = np.maximum(s_t - strike, 0.0) if is_call else np.maximum(strike - s_t, 0.0)
+    pnl_t = cash + delta * s_t - payoff
+    return pnl_t * math.exp(-rate * maturity)
+
+
 def strike_ladder(res: AsianMcResult, strikes: List[float]) -> List[dict]:
     """Reprice TOUS les strikes sur les chemins déjà simulés (gratuit) — le réflexe
     desk : on pense en nappe, pas en point. CV recalibrée par strike."""
