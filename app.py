@@ -68,6 +68,14 @@ sidebar = html.Div([
         vertical=True, pills=False,
     ),
 
+    # ── Bonus (hors roadmap : extensions quant) ──────────────────────
+    html.P("BONUS", className="nav-title mt-3"),
+    dbc.Nav(
+        [dbc.NavLink("Monte Carlo — Asiatique", href="/monte-carlo",
+                     active="exact", className="nav-link")],
+        vertical=True, pills=False,
+    ),
+
     html.Hr(className="border-secondary mt-4"),
 
     # ── Statut connexion ─────────────────────────────────────────────
