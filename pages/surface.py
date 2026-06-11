@@ -8,9 +8,11 @@ from dash import html, dcc, dash_table, callback, Input, Output
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import numpy as np
+import pandas as pd
 
 from src.data.source import datasource
 from src.data import no_data_alert
+from src.surfaces.calibration import svi_total_variance
 
 dash.register_page(__name__, path="/surface", name="Surface de Vol")
 
@@ -145,14 +147,29 @@ def refresh_surface(_, symbol):
         k_lo = min(k.min() for k, _ in slices.values())
         k_hi = max(k.max() for k, _ in slices.values())
         x = np.linspace(k_lo, k_hi, 41)
+        # La surface affichée est un MODÈLE : pour chaque tranche on évalue la
+        # FORMULE SVI (définie pour tout k, ailes linéaires en variance totale —
+        # même usage que pour le strip du varswap) sur la grille k commune →
+        # surface complète et lisse, sans murs plats inventés (np.interp clampé)
+        # ni trous NaN là où la tranche n'a pas de points observés.
+        # Fallback interp + NaN hors plage pour les tranches sans paramètres SVI.
+        svi_by_T = {}
+        if not params.empty and "svi_b" in params.columns:
+            for _, r in params.iterrows():
+                if r.get("model") == "svi" and pd.notna(r.get("svi_b")):
+                    svi_by_T[round(float(r["maturity_years"]), 6)] = (
+                        float(r["svi_a"]), float(r["svi_b"]), float(r["svi_rho"]),
+                        float(r["svi_m"]), float(r["svi_sigma"]))
         rows = []
         for T in Ts:
-            kk, vv = slices[T]
-            zi = np.interp(x, kk, vv)
-            # NaN hors de la plage OBSERVÉE de la tranche : np.interp extrapole à
-            # plat, ce qui dessinait des « murailles » artificielles sur les bords
-            # (les tranches courtes couvrent un k bien plus étroit que les longues).
-            zi[(x < kk.min() - 1e-12) | (x > kk.max() + 1e-12)] = np.nan
+            p = svi_by_T.get(round(T, 6))
+            if p is not None:
+                w = svi_total_variance(x, *p)
+                zi = np.sqrt(np.maximum(w / T, 0.0)) * 100.0
+            else:
+                kk, vv = slices[T]
+                zi = np.interp(x, kk, vv)
+                zi[(x < kk.min() - 1e-12) | (x > kk.max() + 1e-12)] = np.nan
             rows.append(zi)
         Z = np.array(rows)
         y = np.array(Ts) * 365
