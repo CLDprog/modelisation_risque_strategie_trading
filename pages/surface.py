@@ -145,7 +145,16 @@ def refresh_surface(_, symbol):
         k_lo = min(k.min() for k, _ in slices.values())
         k_hi = max(k.max() for k, _ in slices.values())
         x = np.linspace(k_lo, k_hi, 41)
-        Z = np.array([np.interp(x, *slices[T]) for T in Ts])
+        rows = []
+        for T in Ts:
+            kk, vv = slices[T]
+            zi = np.interp(x, kk, vv)
+            # NaN hors de la plage OBSERVÉE de la tranche : np.interp extrapole à
+            # plat, ce qui dessinait des « murailles » artificielles sur les bords
+            # (les tranches courtes couvrent un k bien plus étroit que les longues).
+            zi[(x < kk.min() - 1e-12) | (x > kk.max() + 1e-12)] = np.nan
+            rows.append(zi)
+        Z = np.array(rows)
         y = np.array(Ts) * 365
     else:
         x, y, Z = np.array([]), np.array([]), np.array([[]])
