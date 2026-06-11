@@ -101,15 +101,30 @@ def fit_svi_slice(k: np.ndarray, w: np.ndarray,
         w_hat = svi_total_variance(k, *params)
         return np.mean((w_hat - w) ** 2)
 
-    # Initial guess: a=atm_vol, b=0.1, rho=0, m=0, sigma=0.1
+    # MULTI-DÉPART : avec peu de points (6-10), SLSQP depuis une seule graine tombe
+    # parfois sur le minimum local DÉGÉNÉRÉ b≈0 (smile plat — constaté sur ESTX50
+    # JUN27 : b=0 avec RMSE 0.005 alors qu'un fit skewé existe). On essaie plusieurs
+    # graines (dont des skews négatifs typiques equity) et on garde le meilleur RMSE.
     atm_w = float(np.median(w))
-    x0 = [atm_w * 0.5, 0.1, 0.0, 0.0, 0.1]
+    starts = [
+        [atm_w * 0.5, 0.10, 0.0, 0.0, 0.10],
+        [atm_w * 0.7, 0.05, -0.5, 0.05, 0.15],
+        [atm_w * 0.3, 0.20, -0.7, 0.10, 0.20],
+        [atm_w * 0.9, 0.02, -0.3, -0.05, 0.05],
+    ]
     bounds = [(1e-6, None), (0, None), (-0.999, 0.999), (-1, 1), (1e-4, None)]
 
     try:
-        res = minimize(objective, x0, method="SLSQP",
-                       bounds=bounds, constraints=svi_constraints(),
-                       options={"maxiter": 500, "ftol": 1e-10})
+        best = None
+        for x0 in starts:
+            r = minimize(objective, x0, method="SLSQP",
+                         bounds=bounds, constraints=svi_constraints(),
+                         options={"maxiter": 500, "ftol": 1e-10})
+            if r.success and (best is None or r.fun < best.fun):
+                best = r
+        if best is None:
+            raise RuntimeError("aucun départ SVI n'a convergé")
+        res = best
         a, b, rho, m, sigma = res.x
         w_hat = svi_total_variance(k, a, b, rho, m, sigma)
         residuals = w_hat - w
