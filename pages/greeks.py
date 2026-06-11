@@ -139,22 +139,28 @@ layout = dbc.Container([
         dbc.CardHeader("Simulateur de choc — P&L par strike (Eq.19 : δP ≈ Δ·δS + ½Γ·δS² + ν·δσ + Θ·δt)"),
         dbc.CardBody([
             dbc.Row([
+                # Plages DESK : spot ±20% (le crash roadmap = −20%), vol ±15 pts (le
+                # spike roadmap = +15), horizon ≤ 30j — le theta est un greek de COURT
+                # terme ; au-delà d'un mois on raisonne en repricing (page Scénarios),
+                # pas en θ×jours. Les bornes par option (expiration, valeur temps)
+                # restent actives en garde-fou.
                 dbc.Col([
                     html.Label("Choc spot (%)", className="text-muted small"),
-                    dcc.Slider(id="grk-shock-spot", min=-10, max=10, step=1, value=-5,
-                               marks={i: f"{i:+d}%" for i in range(-10, 11, 5)},
+                    dcc.Slider(id="grk-shock-spot", min=-20, max=20, step=1, value=-5,
+                               marks={i: f"{i:+d}%" for i in range(-20, 21, 5)},
                                tooltip={"placement": "bottom"}),
                 ], width=4),
                 dbc.Col([
                     html.Label("Choc de vol (points)", className="text-muted small"),
-                    dcc.Slider(id="grk-shock-vol", min=-10, max=10, step=1, value=5,
-                               marks={i: f"{i:+d}" for i in range(-10, 11, 5)},
+                    dcc.Slider(id="grk-shock-vol", min=-15, max=15, step=1, value=5,
+                               marks={i: f"{i:+d}" for i in range(-15, 16, 5)},
                                tooltip={"placement": "bottom"}),
                 ], width=4),
                 dbc.Col([
-                    html.Label("Horizon (jours, theta)", className="text-muted small"),
-                    dcc.Slider(id="grk-shock-days", min=0, max=30, step=1, value=0,
-                               marks={i: str(i) for i in range(0, 31, 10)},
+                    html.Label("Horizon theta (jours — borné par expiration et valeur temps)",
+                               className="text-muted small"),
+                    dcc.Slider(id="grk-shock-days", min=0, max=30, step=1, value=1,
+                               marks={i: f"{i}j" for i in (0, 1, 5, 10, 20, 30)},
                                tooltip={"placement": "bottom"}),
                 ], width=4),
             ], className="mb-2"),
@@ -295,10 +301,26 @@ def refresh_shock(s_pct, dvol, days, expiry, symbol):
 
     s = (s_pct or 0) / 100.0
     dv, dt = (dvol or 0), (days or 0)
+
+    # Theta HONNÊTE à long horizon : (1) il ne court que jusqu'à l'expiration de
+    # CHAQUE option ; (2) la perte est plafonnée à la valeur temps de l'option
+    # (mid − intrinsèque, monétisée) — on ne peut pas saigner plus que ce qui existe.
+    # Sans ces bornes, θ×365j ferait perdre 12× sa valeur à une option 1 mois.
+    import numpy as np
+    dte = sub.get("days_to_expiry", pd.Series(dt, index=sub.index)).clip(lower=0)
+    dt_eff = np.minimum(dt, dte)
+    spot_ref = sub.get("reference_spot", pd.Series(np.nan, index=sub.index))
+    intrinsic = np.where(sub["right"].astype(str).str.upper().str[0] == "C",
+                         (spot_ref - sub["strike"]).clip(lower=0),
+                         (sub["strike"] - spot_ref).clip(lower=0))
+    mult = sub.get("multiplier", pd.Series(100, index=sub.index)).fillna(100)
+    time_value_eur = ((sub["mid_price"] - intrinsic).clip(lower=0) * mult).fillna(0)
+    pnl_theta = np.maximum(sub["eur_theta"].fillna(0) * dt_eff, -time_value_eur)
+
     pnl = (sub["eur_delta"] * s
            + 0.5 * sub["eur_gamma"].fillna(0) * s ** 2
            + sub["eur_vega"].fillna(0) * dv
-           + sub["eur_theta"].fillna(0) * dt)
+           + pnl_theta)
 
     labels = [f"{k:g} {r}" for k, r in zip(sub["strike"], sub["right"])]
     fig.add_trace(go.Bar(
@@ -318,8 +340,19 @@ def refresh_shock(s_pct, dvol, days, expiry, symbol):
         ("Δ (directionnel)", float((sub["eur_delta"] * s).sum())),
         ("Γ (convexité)",    float((0.5 * sub["eur_gamma"].fillna(0) * s ** 2).sum())),
         ("ν (vol)",          float((sub["eur_vega"].fillna(0) * dv).sum())),
-        ("Θ (temps)",        float((sub["eur_theta"].fillna(0) * dt).sum())),
+        ("Θ (temps, borné)", float(pnl_theta.sum())),
     ]
+    # Garde-fou : l'approximation greeks (Eq.19) est locale — pour des chocs
+    # extrêmes le repricing complet (page Scénarios, source de vérité roadmap)
+    # diverge sensiblement (delta/gamma figés, pas de skew dynamique).
+    warning = None
+    if abs(s_pct or 0) > 10 or abs(dv) > 10:
+        warning = dbc.Alert(
+            "Choc extrême : l'approximation par les greeks sous-estime les non-linéarités "
+            "— le repricing complet (page Scénarios) fait foi.",
+            color="warning", className="py-1 px-2 mt-2 mb-0",
+            style={"fontSize": "0.72rem"})
+
     summary = html.Div([
         _mb(f"{total:,.0f} €", "P&L total (1 contrat de chaque)",
             "positive" if total >= 0 else "negative"),
@@ -328,6 +361,7 @@ def refresh_shock(s_pct, dvol, days, expiry, symbol):
             html.Span(f"{v:,.0f} €", className="small fw-bold",
                       style={"color": "#1a7f37" if v >= 0 else "#cf222e"}),
         ]) for name, v in decomp], className="mt-2"),
+        warning,
     ])
     return fig, summary
 

@@ -127,6 +127,10 @@ class Collector:
                 self.account_id = self.adapter.account_id or self.account_id
                 self._status["connected"] = True
                 self._status["account_id"] = self.account_id
+                # Statut écrit DÈS la connexion (pas seulement en fin de cycle) :
+                # le front affiche « connecté » pendant tout le cycle 0.
+                self._status["heartbeat"] = datetime.now(timezone.utc).isoformat()
+                _atomic_write_json(STATUS_FILE, self._status)
                 logger.success(f"Connecté à la Web API IBKR (compte {self.account_id})")
                 return True
             logger.warning(f"Session non authentifiée (essai {attempt+1}) — "
@@ -582,6 +586,12 @@ class Collector:
                     "spot": None, "n_quotes": 0, "error": str(exc)[:120],
                     "updated": datetime.now(timezone.utc).isoformat(),
                 }
+            # HEARTBEAT par symbole : statut écrit en continu pendant le cycle
+            # (~toutes les 30-40s) → le front voit le collecteur ACTIF et la
+            # couverture par sous-jacent se remplir en direct (un cycle dure ~30 min,
+            # bien plus que la fenêtre de fraîcheur de 10 min).
+            self._status["heartbeat"] = datetime.now(timezone.utc).isoformat()
+            _atomic_write_json(STATUS_FILE, self._status)
             time.sleep(self.symbol_pause)
 
         # Écritures combinées (atomiques) + lineage (code_version/config_hash/run_id).

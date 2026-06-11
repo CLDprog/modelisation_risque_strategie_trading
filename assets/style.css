@@ -57,8 +57,11 @@ body { background-color: #f6f8fa; color: #1f2328;
 
 /* ── Formula box ── */
 .formula-box { background: #f6f8fa; border: 1px solid #d0d7de; border-left: 3px solid #0969da;
-               border-radius: 4px; padding: 0.4rem 0.9rem; margin: 0.25rem 0;
+               border-radius: 4px; padding: 0.55rem 0.9rem; margin: 0.25rem 0;
                color: #1f2328; }
+/* Les formules MathJax héritent du 13px global → trop petites. On les agrandit. */
+.formula-box mjx-container { font-size: 145% !important; }
+.formula-box .MathJax { font-size: 145% !important; }
 
 /* ── Tables Dash : denses, type rapport de risque ── */
 .dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th {

@@ -90,7 +90,10 @@ class DataSource:
 
     def _collector_fresh(self, status: Optional[dict] = None) -> bool:
         status = status or self.collector_status()
-        last = status.get("last_cycle")
+        # Le heartbeat est écrit à CHAQUE symbole collecté (~30-40s) — c'est lui qui
+        # fait foi pendant un cycle (qui dure ~30 min, > fenêtre de fraîcheur).
+        # last_cycle reste le fallback pour les anciens fichiers de statut.
+        last = status.get("heartbeat") or status.get("last_cycle")
         if not last:
             return False
         try:
