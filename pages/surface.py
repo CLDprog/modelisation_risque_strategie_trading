@@ -93,7 +93,7 @@ layout = dbc.Container([
                          className="p-2"),
         ], className="card h-100"), width=7),
         dbc.Col(dbc.Card([
-            dbc.CardHeader("Heatmap IV — Log-moneyness × Maturité"),
+            dbc.CardHeader("Heatmap IV — Moneyness standardisée × Maturité"),
             dbc.CardBody(dcc.Graph(id="surf-heat", config={"displayModeBar": False}),
                          className="p-2"),
         ], className="card h-100"), width=5),
@@ -144,14 +144,13 @@ def refresh_surface(_, symbol):
                                 g["implied_vol"].to_numpy(dtype=float) * 100)
     Ts = sorted(slices)
     if Ts:
-        k_lo = min(k.min() for k, _ in slices.values())
-        k_hi = max(k.max() for k, _ in slices.values())
-        x = np.linspace(k_lo, k_hi, 41)
-        # La surface affichée est un MODÈLE : pour chaque tranche on évalue la
-        # FORMULE SVI (définie pour tout k, ailes linéaires en variance totale —
-        # même usage que pour le strip du varswap) sur la grille k commune →
-        # surface complète et lisse, sans murs plats inventés (np.interp clampé)
-        # ni trous NaN là où la tranche n'a pas de points observés.
+        # Surface tracée en MONEYNESS STANDARDISÉE z = k/(σ_ATM·√T) (≈ espace
+        # delta, convention desk) : chaque maturité couvre ainsi le MÊME domaine
+        # (la grille collectée ±10Δ ↔ z ≈ ±1.3 quel que soit T). On évalue la
+        # FORMULE SVI de chaque tranche (modèle, défini pour tout k) aux k = z·σ√T
+        # correspondants → surface rectangulaire complète SANS extrapoler la
+        # tranche courte sur le domaine absolu de la longue (k=±0.35 à 30j = des
+        # deltas de 0.0001, ailes explosives sans signification).
         # Fallback interp + NaN hors plage pour les tranches sans paramètres SVI.
         svi_by_T = {}
         if not params.empty and "svi_b" in params.columns:
@@ -160,16 +159,19 @@ def refresh_surface(_, symbol):
                     svi_by_T[round(float(r["maturity_years"]), 6)] = (
                         float(r["svi_a"]), float(r["svi_b"]), float(r["svi_rho"]),
                         float(r["svi_m"]), float(r["svi_sigma"]))
+        x = np.linspace(-1.5, 1.5, 41)                  # z, ~ ±7Δ
         rows = []
         for T in Ts:
+            kk, vv = slices[T]
+            sig_atm = float(np.interp(0.0, kk, vv)) / 100.0
+            k_eval = x * sig_atm * np.sqrt(T)
             p = svi_by_T.get(round(T, 6))
             if p is not None:
-                w = svi_total_variance(x, *p)
+                w = svi_total_variance(k_eval, *p)
                 zi = np.sqrt(np.maximum(w / T, 0.0)) * 100.0
             else:
-                kk, vv = slices[T]
-                zi = np.interp(x, kk, vv)
-                zi[(x < kk.min() - 1e-12) | (x > kk.max() + 1e-12)] = np.nan
+                zi = np.interp(k_eval, kk, vv)
+                zi[(k_eval < kk.min() - 1e-12) | (k_eval > kk.max() + 1e-12)] = np.nan
             rows.append(zi)
         Z = np.array(rows)
         y = np.array(Ts) * 365
@@ -206,7 +208,8 @@ def refresh_surface(_, symbol):
         template="plotly_white", paper_bgcolor="#ffffff",
         margin=dict(l=0, r=0, t=30, b=0), height=520,
         scene=dict(
-            xaxis=dict(title="Log-moneyness k", color="#57606a", gridcolor="#d0d7de"),
+            xaxis=dict(title="Moneyness standardisée z = k/(σ√T)", color="#57606a",
+                       gridcolor="#d0d7de"),
             yaxis=dict(title="Jours à expiration", color="#57606a", gridcolor="#d0d7de"),
             zaxis=dict(title="IV (%)", color="#57606a", gridcolor="#d0d7de"),
             bgcolor="#ffffff",
@@ -225,7 +228,8 @@ def refresh_surface(_, symbol):
     fig_heat.update_layout(
         template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         margin=dict(l=60, r=20, t=30, b=60),
-        xaxis_title="Log-moneyness k", yaxis_title="Jours à expiration", height=520,
+        xaxis_title="Moneyness standardisée z = k/(σ√T)",
+        yaxis_title="Jours à expiration", height=520,
     )
 
     # SVI : term structure des paramètres calibrés (a,b,σ | ρ,m)
