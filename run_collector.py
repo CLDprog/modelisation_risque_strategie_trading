@@ -590,6 +590,10 @@ class Collector:
             # (~toutes les 30-40s) → le front voit le collecteur ACTIF et la
             # couverture par sous-jacent se remplir en direct (un cycle dure ~30 min,
             # bien plus que la fenêtre de fraîcheur de 10 min).
+            # Connexion : si des quotes viennent d'arriver, on EST connecté — preuve
+            # par les données, plus fiable qu'un aller-retour d'auth ponctuel.
+            if self._status["symbols"].get(symbol, {}).get("n_quotes"):
+                self._status["connected"] = True
             self._status["heartbeat"] = datetime.now(timezone.utc).isoformat()
             _atomic_write_json(STATUS_FILE, self._status)
             time.sleep(self.symbol_pause)
@@ -710,11 +714,13 @@ class Collector:
                         "convexity_premium": tr.convexity_premium,
                         "snapshot_ts": now_iso,
                     })
-                idx = interpolate_variance_index(term, 30)
-                if idx:
+                # ⚠️ ne PAS nommer cette variable `idx` : elle écraserait l'index de
+                # cycle (bug constaté : « Cycle {dict} terminé » dans les logs).
+                var_idx = interpolate_variance_index(term, 30)
+                if var_idx:
                     vh_rows.append({"ts": now_iso, "run_id": run_id, "underlying": sym,
-                                    "var_index_30d": idx["index"],
-                                    "clamped": idx["clamped"]})
+                                    "var_index_30d": var_idx["index"],
+                                    "clamped": var_idx["clamped"]})
             if vt_rows:
                 self.store.write("variance_term",
                                  self._add_lineage(pd.DataFrame(vt_rows), run_id),
@@ -744,14 +750,18 @@ class Collector:
             logger.warning(f"qc : {exc}")
 
         # Statut + catalogue de métriques opérationnelles (roadmap Part XIV)
-        self._status["connected"]   = self.adapter.is_healthy()
+        sym_stats = self._status.get("symbols", {})
+        n_quotes = sum(int(s.get("n_quotes") or 0) for s in sym_stats.values())
+        # Connexion : les DONNÉES font foi. is_healthy() lit un état de session qui
+        # peut être transitoirement DEGRADED (hoquet de tickle pendant un cycle de
+        # 30 min) alors que la collecte fonctionne — constaté : front « déconnecté »
+        # entre deux cycles pourtant sains.
+        self._status["connected"]   = self.adapter.is_healthy() or n_quotes > 0
         self._status["last_cycle"]  = datetime.now(timezone.utc).isoformat()
         self._status["cycle_count"] += 1
         secs = round(time.perf_counter() - t0, 1)
         self._status["last_cycle_secs"] = secs
         self._status.setdefault("cycle_secs", []).append(secs)
-        sym_stats = self._status.get("symbols", {})
-        n_quotes = sum(int(s.get("n_quotes") or 0) for s in sym_stats.values())
         n_usable = sum(int(s.get("n_usable") or 0) for s in sym_stats.values())
         self._status["metrics"] = {
             "run_id": run_id,
