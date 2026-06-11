@@ -74,7 +74,7 @@ layout = dbc.Container([
     # ── Vue d'ensemble : smiles superposés + term structure + skew ────
     dbc.Row([
         dbc.Col(dbc.Card([
-            dbc.CardHeader("Smiles superposés — toutes les maturités"),
+            dbc.CardHeader("Smiles superposés — toutes les maturités (options OTM)"),
             dbc.CardBody(dcc.Graph(id="iv-smile-overlay", config={"displayModeBar": False}),
                          className="p-2"),
         ], className="card h-100"), width=7),
@@ -247,9 +247,16 @@ def refresh_iv_charts(symbol, _):
         return empty, empty, empty
     usable = chain[chain["is_usable"]] if "is_usable" in chain.columns else chain
     usable = usable.dropna(subset=["implied_vol", "log_moneyness"])
+    # Convention smile : options OTM uniquement (puts sous le forward, calls au-dessus).
+    # Une option très ITM a un prix ≈ intrinsèque → IV bruitée ; comme la grille porte
+    # call ET put à chaque strike, mélanger les deux dessinait des segments verticaux
+    # (deux IV au même k — constaté sur ESTX50 554j, strike 9000 : call 14.8% vs put
+    # ITM 19.9%). Le smile par maturité (carte dédiée) garde la vue calls vs puts.
+    usable = usable[((usable["right"] == "P") & (usable["log_moneyness"] < 0)) |
+                    ((usable["right"] == "C") & (usable["log_moneyness"] >= 0))]
     expiries = sorted(usable["expiry"].unique())
 
-    # 1) Smiles superposés (calls + puts confondus, une trace par maturité)
+    # 1) Smiles superposés (OTM, une trace par maturité)
     fig_ov = go.Figure()
     for i, e in enumerate(expiries):
         d = usable[usable["expiry"] == e].sort_values("log_moneyness")
