@@ -346,16 +346,36 @@ class IBKRWebAdapter(BrokerAdapter):
                     return int(r["conid"])
         return int(typed[0]["conid"])
 
-    def _option_months(self, symbol: str, sec_type: str = "STK") -> List[str]:
-        """Available option months for an underlying, e.g. ['JAN26','FEB26',...]."""
+    def _option_months(self, symbol: str, sec_type: str = "STK",
+                       conid: Optional[int] = None) -> List[str]:
+        """Available option months for an underlying, e.g. ['JAN26','FEB26',...].
+
+        ⚠️ CONID-AWARE : la recherche par symbole renvoie TOUS les listings homonymes
+        et prendre le premier tronquait les mois au listing US en cas de collision de
+        tickers (constaté le 11/06 : ALV = Autoliv NYSE 5 mois OPRA vs Allianz IBIS
+        12 mois EUREX→DEC30 ; DTE = DTE Energy 4 mois vs Deutsche Telekom 12 mois ;
+        idem MC/EL/RACE/SU…). On privilégie la ligne du conid RÉSOLU."""
+        def _months_of(row) -> List[str]:
+            for sec in row.get("sections", []) or []:
+                if sec.get("secType") == "OPT" and sec.get("months"):
+                    return [m for m in str(sec["months"]).split(";") if m]
+            return []
+
         try:
             res = self._client.search_contract_by_symbol(symbol, sec_type=sec_type)
-            for row in _extract_rows(res):
+            rows = _extract_rows(res)
+            if conid is not None:
+                for row in rows:
+                    if str(row.get("conid")) == str(conid):
+                        m = _months_of(row)
+                        if m:
+                            return m
+            for row in rows:
                 if str(row.get("symbol", "")).upper() != symbol.upper():
                     continue
-                for sec in row.get("sections", []) or []:
-                    if sec.get("secType") == "OPT" and sec.get("months"):
-                        return [m for m in str(sec["months"]).split(";") if m]
+                m = _months_of(row)
+                if m:
+                    return m
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"_option_months({symbol}): {exc}")
         return []
@@ -430,7 +450,7 @@ class IBKRWebAdapter(BrokerAdapter):
                             sec_type: str = "STK",
                             exchange: Optional[str] = None) -> Optional[OptionChainParams]:
         today = date.today()
-        months = self._option_months(symbol, sec_type)
+        months = self._option_months(symbol, sec_type, conid=underlying_conid)
         if not months:
             logger.warning(f"No option months discovered for {symbol}")
             return None
