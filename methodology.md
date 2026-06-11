@@ -221,6 +221,76 @@ $$\text{spread\%} = \frac{ask - bid}{(ask + bid)/2}, \quad mid = \frac{ask + bid
 $$\sigma_P^2 = \sum_i w_i^2 \sigma_i^2 + 2\sum_{i < j} w_i w_j \rho_{ij} \sigma_i \sigma_j$$
 
 Utilisée pour les diagnostics de corrélation ou la décomposition de variance de portefeuille.
+**Implémentée** dans `src/risk/dispersion.py` : corrélation implicite moyenne
+$\bar\rho = (\sigma_I^2 - \Sigma w_i^2\sigma_i^2)/((\Sigma w_i\sigma_i)^2 - \Sigma w_i^2\sigma_i^2)$
+calculée par tenor (indice vs 50 composantes) → table `dispersion_diagnostics`.
+
+---
+
+## 11. Méthodes bonus (hors roadmap — extensions quant)
+
+> Ces méthodes ne sont pas exigées par la roadmap. Elles RÉUTILISENT l'infrastructure
+> (spot du store, σ de la surface SVI, forwards de parité, vega € de la grille) pour
+> faire de la finance de desk. Distinction fondamentale : tout le pricing se fait sous
+> la **mesure risque-neutre ℚ** ($E^{\mathbb Q}[S_T] = F$ — pricer n'est PAS prédire).
+
+### 11.1 Monte Carlo — option asiatique arithmétique (`src/pricing/monte_carlo.py`)
+
+Payoff path-dependent (moyenne du chemin) → pas de forme fermée, l'arbre explose.
+
+- **Chemins GBM sous ℚ** : $S_{t+\Delta} = S_t\,e^{(b-\sigma^2/2)\Delta + \sigma\sqrt{\Delta}Z}$,
+  drift calé **point par point** sur la courbe forward de parité ($E[S_{t_i}] = F(t_i)$).
+- **Variate de contrôle géométrique** : la moyenne géométrique d'un GBM est lognormale ⇒
+  prix exact (Kemna-Vorst discret) :
+  $E[\ln G] = \ln S_0 + (b-\tfrac{\sigma^2}{2})\,T\,\tfrac{n+1}{2n}$,
+  $\;Var[\ln G] = \sigma^2 T\,\tfrac{(n+1)(2n+1)}{6n^2}$.
+  Estimateur corrigé (β optimal) : $\hat P = \bar P_A - \beta(\bar P_G - P_G^{exact})$ —
+  variance ÷ 20-100.
+- **Quasi-Monte Carlo** : suites de Sobol brouillées (Owen) → erreur ~1/N au lieu de 1/√N.
+- **Greeks** : delta *pathwise* (exact, car $A \propto S_0$) ; gamma par **re-scaling des
+  chemins** (différence centrale à aléas strictement identiques, zéro re-simulation) ;
+  vega/theta par bump à **nombres aléatoires communs** (CRN).
+- Garde-fous testés : asiatique ∈ [géométrique exacte, européenne Black] ; vol effective ≈ σ/√3.
+
+### 11.2 Variance swap & mini-VSTOXX (`src/pricing/varswap.py`)
+
+Réplication **model-free** du log-contrat (Demeterfi et al. 1999, méthodologie VIX/VSTOXX) :
+
+$$\sigma^2_{var} = \frac{2e^{rT}}{T}\sum_i \frac{\Delta K_i}{K_i^2}\,Q(K_i)
+\;-\; \frac{1}{T}\Big(\frac{F}{K_0}-1\Big)^2$$
+
+- $Q(K)$ = option OTM au strike $K$ ; strip de 400 strikes **densifié par la surface SVI**
+  (la grille collectée n'a que ~5 strikes/maturité).
+- Indice 30 j : interpolation **linéaire en variance totale** entre les deux maturités
+  encadrantes (standard VIX) ; mini-VSTOXX $= 100\cdot\sigma_{30j}$ — comparable au VSTOXX officiel.
+- **Prime de convexité** $= \sigma_{var} - \sigma_{ATM} \geq 0$ : le varswap « achète »
+  tout le skew (poids en $1/K^2$).
+- Version **exécutable** : même formule sur la vraie grille au bid/ask → spread de réplication.
+
+### 11.3 Delta-hedge discret (`delta_hedge_pnl`)
+
+On vend la vanille au prix Black ($\sigma_{impl}$), on delta-hedge à fréquence $\Delta t$ le long
+de chemins qui réalisent $\sigma_{real}$ :
+
+- $\sigma_{real} = \sigma_{impl}$, sans coûts : P&L centré sur 0, écart-type qui se resserre
+  avec la fréquence — *le prix d'une option est le coût de son hedge*.
+- **Leçon 1 (coûts)** : des frais de $c$ bps par rebalancement retranchent
+  $c\cdot|\Delta\delta|\cdot S$ à chaque tour → il existe une fréquence optimale.
+- **Leçon 2 (gamma trading)** : $E[P\&L] \approx \nu\,(\sigma_{impl}-\sigma_{real})$ —
+  on gagne en vendant la vol plus cher qu'elle ne se réalise, pas en devinant la direction.
+
+### 11.4 Trade de dispersion (page `/dispersion`, application d'Eq.23)
+
+Short vol indice / long vol composantes, **vega-weighted** (vega net ≈ 0) :
+
+- Niveau d'entrée = $\bar\rho$ implicite. Sous corrélation constante :
+  $\sigma_I(\rho) = \sqrt{\Sigma w_i^2\sigma_i^2 + \rho\,[(\Sigma w_i\sigma_i)^2 -
+  \Sigma w_i^2\sigma_i^2]}$.
+- P&L approché (vols inchangées) : $-Vega\cdot(\sigma_I(\rho_{real}) - \sigma_I(\bar\rho))$
+  → breakeven exactement à $\bar\rho$ ; sensibilité « corr-vega » $= Vega\cdot
+  \partial\sigma_I/\partial\rho$.
+- Coût d'entrée = somme des demi-spreads des jambes (contrats réels depuis les vega € de la
+  grille) → décalage du breakeven en $\rho$.
 
 ---
 
