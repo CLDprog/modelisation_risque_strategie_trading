@@ -81,8 +81,15 @@ def check_quote_health(snapshot_df: pd.DataFrame, underlying_symbol: str,
             mid = (row["bid"] + row["ask"]) / 2
             spreads.append((row["ask"] - row["bid"]) / mid if mid > 0 else float("inf"))
 
-    avg_spread = float(np.mean(spreads)) if spreads else float("inf")
+    # Liste vide = AUCUNE quote deux-côtés (fallback last/close sur toute la chaîne,
+    # fréquent au snapshot en flux différé) — c'est une information distincte, pas
+    # un « spread infini » (le inf polluait alertes et baselines d'anomalies).
     stale_ratio = float((~chain["is_usable"]).mean()) if "is_usable" in chain.columns else 0.0
+    if not spreads:
+        return QcResult("quote_health", underlying_symbol, "warn", "warning",
+                        round(stale_ratio, 5), max_stale_ratio, "no_two_sided_quotes",
+                        {"avg_spread_pct": None, "stale_ratio": stale_ratio})
+    avg_spread = float(np.mean(spreads))
 
     if avg_spread > max_spread_pct or stale_ratio > max_stale_ratio:
         status, severity = "warn", "warning"
@@ -279,32 +286,49 @@ def check_greeks_reconciliation(recon_summary: dict, underlying_symbol: str,
 
 def check_carry_consistency(forward_df: pd.DataFrame, underlying_symbol: str,
                             min_carry: float = -0.10,
-                            max_carry: float = 0.10) -> QcResult:
+                            max_carry: float = 0.10,
+                            max_abs_total_carry: float = 0.10) -> QcResult:
     """
-    Roadmap Step 6 : le carry implicite (q = dividende − repo, annualisé) doit rester
-    dans des bornes économiquement plausibles. Hors bornes = forward suspect (quotes
-    asymétriques, parité contaminée) → warn carry_out_of_bounds.
+    Roadmap Step 6 : le carry implicite (q = dividende − repo) doit rester
+    économiquement plausible. Le critère porte sur le DÉPORT TOTAL |q·T| (part du
+    spot payée en dividendes/repo sur la période), pas sur le taux annualisé :
+    en saison de dividendes (mai-juin), un dividende discret juste avant une
+    échéance courte donne un q annualisé énorme mais LÉGITIME (constaté 12/06 :
+    VOW3 q=43 % sur ~30j = 3.5 % de déport total = un dividende normal). Seuil par
+    défaut 10 % : les hauts rendements européens (MBG/VOW3 ~8-9 % en un paiement
+    annuel) passent quand l'échéance encadre la date de dividende.
+    Le taux annualisé n'est borné que sur les maturités ≥ 6 mois, où il a un sens.
+    Hors bornes = forward suspect (quotes asymétriques, parité contaminée).
     """
     df = forward_df
     col = "underlying" if "underlying" in df.columns else "underlying_symbol"
     if col in df.columns:
         df = df[df[col] == underlying_symbol]
-    carries = pd.to_numeric(df.get("implied_carry"), errors="coerce").dropna() \
+    carries = pd.to_numeric(df.get("implied_carry"), errors="coerce") \
         if "implied_carry" in df.columns else pd.Series(dtype=float)
+    mats = pd.to_numeric(df.get("maturity_years"), errors="coerce") \
+        if "maturity_years" in df.columns else pd.Series(1.0, index=carries.index)
+    ok_mask = carries.notna() & mats.notna()
+    carries, mats = carries[ok_mask], mats[ok_mask]
     if carries.empty:
         return QcResult("carry_consistency", underlying_symbol, "warn", "warning",
-                        float("nan"), max_carry, "no_carry_estimates", {})
-    worst = float(carries.abs().max())
-    in_bounds = carries.between(min_carry, max_carry)
-    n_out = int((~in_bounds).sum())
+                        float("nan"), max_abs_total_carry, "no_carry_estimates", {})
+
+    total = (carries * mats).abs()                       # déport total |q·T|
+    bad_total = total > max_abs_total_carry
+    bad_annual = (mats >= 0.5) & ~carries.between(min_carry, max_carry)
+    n_out = int((bad_total | bad_annual).sum())
+    worst = float(total.max())
     status = "pass" if n_out == 0 else "warn"
     return QcResult("carry_consistency", underlying_symbol, status,
                     "info" if status == "pass" else "warning",
-                    round(worst, 5), round(max_carry, 5),
+                    round(worst, 5), round(max_abs_total_carry, 5),
                     "ok" if status == "pass" else "carry_out_of_bounds",
                     {"n_maturities": len(carries), "n_out_of_bounds": n_out,
+                     "worst_total_carry": round(worst, 5),
+                     "worst_annualized": round(float(carries.abs().max()), 5),
                      "carry_median": round(float(carries.median()), 5),
-                     "bounds": [min_carry, max_carry]})
+                     "bounds_annualized_T>=0.5": [min_carry, max_carry]})
 
 
 def check_broker_greeks_reconciliation(iv_points_df: pd.DataFrame,
