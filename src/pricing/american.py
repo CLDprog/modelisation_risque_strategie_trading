@@ -109,12 +109,15 @@ def greeks_american(spot: float, strike: float, sigma: float, maturity: float,
 
     delta / gamma / theta sont lus directement sur les nœuds internes de l'arbre
     (méthode standard de Hull) — bien plus stable que des différences finies par
-    bump, polluées par le "sawtooth" de discrétisation de l'arbre. vega est obtenu
-    par re-pricing (bump de vol). Conventions alignées sur Black-76 : vega PAR POINT
-    de vol (×0.01), theta PAR JOUR calendaire. Renvoie (delta, gamma, vega, theta).
+    bump, polluées par le "sawtooth" de discrétisation de l'arbre. vega et rho sont
+    obtenus par re-pricing (bump de vol / bump du taux seul, dividende q fixe → le
+    forward se réapprécie avec r, convention identique au bs_rho européen).
+    Conventions alignées sur Black-76 : vega PAR POINT de vol (×0.01),
+    rho PAR POINT de taux (×0.01), theta PAR JOUR calendaire.
+    Renvoie (delta, gamma, vega, theta, rho).
     """
     if maturity <= 0 or sigma <= 0 or spot <= 0 or steps < 2:
-        return 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
 
     N = steps
     dt = maturity / N
@@ -153,4 +156,13 @@ def greeks_american(spot: float, strike: float, sigma: float, maturity: float,
     p_vd = price_american_binomial(spot, strike, sigma - dv, maturity, rate, carry, right, N).price
     vega = (p_vu - p_vd) / 2.0
 
-    return float(delta), float(gamma), float(vega), float(theta)
+    # rho par 1 point de taux. ⚠️ Dans ce codebase le paramètre `carry` est le
+    # RENDEMENT DE DIVIDENDE q (rate − carry = b dans p_up) : on bumpe donc le
+    # taux SEUL, q fixe → b = r − q bouge → le forward se réapprécie avec r,
+    # convention identique au bs_rho européen (spot tenu fixe).
+    dr = 0.0005
+    p_ru = price_american_binomial(spot, strike, sigma, maturity, rate + dr, carry, right, N).price
+    p_rd = price_american_binomial(spot, strike, sigma, maturity, rate - dr, carry, right, N).price
+    rho = (p_ru - p_rd) / (2.0 * dr) * 0.01
+
+    return float(delta), float(gamma), float(vega), float(theta), float(rho)

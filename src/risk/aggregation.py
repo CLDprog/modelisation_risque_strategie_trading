@@ -70,6 +70,8 @@ class PositionRisk:
     portfolio_dollar_gamma: float
     portfolio_dollar_vega: float
     valuation_ts: str
+    rho: float = 0.0
+    portfolio_rho: float = 0.0
 
 
 def compute_position_risk(position: Position, iv_row: dict,
@@ -112,6 +114,7 @@ def compute_position_risk(position: Position, iv_row: dict,
         gamma=pricer_result.gamma,
         vega=pricer_result.vega,
         theta=pricer_result.theta,
+        rho=pricer_result.rho,
         dollar_gamma=pricer_result.dollar_gamma,
         dollar_vega=pricer_result.dollar_vega,
         # Monetize by quantity and multiplier
@@ -120,6 +123,7 @@ def compute_position_risk(position: Position, iv_row: dict,
         portfolio_gamma=pricer_result.gamma * q * mult,
         portfolio_vega=pricer_result.vega * q * mult,
         portfolio_theta=pricer_result.theta * q * mult,
+        portfolio_rho=pricer_result.rho * q * mult,
         portfolio_dollar_gamma=pricer_result.dollar_gamma * q,
         portfolio_dollar_vega=pricer_result.dollar_vega * q,
         valuation_ts=valuation_ts,
@@ -132,7 +136,7 @@ def compute_position_risk(position: Position, iv_row: dict,
 
 _AGG_COLS = [
     "portfolio_delta", "portfolio_gamma", "portfolio_vega", "portfolio_theta",
-    "portfolio_dollar_gamma", "portfolio_dollar_vega", "pnl_approx",
+    "portfolio_rho", "portfolio_dollar_gamma", "portfolio_dollar_vega", "pnl_approx",
 ]
 
 
@@ -182,12 +186,14 @@ def position_risk_to_dataframe(risks: List[PositionRisk]) -> pd.DataFrame:
             "gamma": r.gamma,
             "vega": r.vega,
             "theta": r.theta,
+            "rho": r.rho,
             "dollar_gamma": r.dollar_gamma,
             "dollar_vega": r.dollar_vega,
             "portfolio_delta": r.portfolio_delta,
             "portfolio_gamma": r.portfolio_gamma,
             "portfolio_vega": r.portfolio_vega,
             "portfolio_theta": r.portfolio_theta,
+            "portfolio_rho": r.portfolio_rho,
             "portfolio_dollar_gamma": r.portfolio_dollar_gamma,
             "portfolio_dollar_vega": r.portfolio_dollar_vega,
             "pnl_approx": r.pnl_approx,

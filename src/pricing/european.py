@@ -128,6 +128,23 @@ def bs_theta(forward: float, strike: float, sigma: float,
     return (term1 + term2 + term3) / 365.0
 
 
+def bs_rho(forward: float, strike: float, sigma: float,
+           maturity: float, rate: float, right: str) -> float:
+    """rho = dPrice/d(rate), exprimé PAR POINT de taux (×0.01, même convention que
+    le vega par point de vol). Spot tenu FIXE (convention BSM : le forward
+    F = S·e^{(r−q)T} se réapprécie avec r) :
+        call : ρ = K·T·e^{−rT}·N(d2)·0.01   ·   put : ρ = −K·T·e^{−rT}·N(−d2)·0.01
+    Un call s'apprécie quand les taux montent (forward plus haut, strike plus
+    actualisé) ; un put se déprécie. Relation de parité : ρ_C − ρ_P = K·T·e^{−rT}·0.01."""
+    if maturity <= 0 or sigma <= 0:
+        return 0.0
+    _d2 = d2(forward, strike, sigma, maturity)
+    discount = math.exp(-rate * maturity)
+    if right.upper()[0] == "C":
+        return strike * maturity * discount * norm.cdf(_d2) * 0.01
+    return -strike * maturity * discount * norm.cdf(-_d2) * 0.01
+
+
 def dollar_gamma(gamma: float, spot: float, multiplier: int = 100) -> float:
     """Eq 17: $/gamma = gamma * spot^2 * multiplier / 100"""
     return gamma * spot ** 2 * multiplier / 100.0
@@ -159,6 +176,7 @@ class EuropeanPricerResult:
     dollar_vega: float
     spot: float
     multiplier: int = 100
+    rho: float = 0.0
     pricer_version: str = "bs_v1"
 
 
@@ -174,6 +192,7 @@ def price_european(forward: float, strike: float, sigma: float,
     gamma = bs_gamma(forward, strike, sigma, maturity, rate, spot)
     vega = bs_vega(forward, strike, sigma, maturity, rate)
     theta = bs_theta(forward, strike, sigma, maturity, rate, right)
+    rho = bs_rho(forward, strike, sigma, maturity, rate, right)
     dgamma = dollar_gamma(gamma, spot, multiplier)
     dvega = dollar_vega(vega, multiplier)
 
@@ -181,7 +200,7 @@ def price_european(forward: float, strike: float, sigma: float,
         forward=forward, strike=strike, sigma=sigma,
         maturity_years=maturity, rate=rate, right=right,
         price=price, delta=delta, gamma=gamma,
-        vega=vega, theta=theta,
+        vega=vega, theta=theta, rho=rho,
         dollar_gamma=dgamma, dollar_vega=dvega,
         spot=spot, multiplier=multiplier,
     )

@@ -330,7 +330,7 @@ def compute_live_analytics(chain_df: pd.DataFrame, symbol: str,
             lambda r: iv_map.get(r["instrument_key"], {}).get("forward") or r["forward"],
             axis=1)
 
-        from src.pricing.european import bs_delta, bs_gamma, bs_vega, bs_theta
+        from src.pricing.european import bs_delta, bs_gamma, bs_vega, bs_theta, bs_rho
         from src.pricing.american import greeks_american
 
         def add_greeks(row):
@@ -344,18 +344,20 @@ def compute_live_analytics(chain_df: pd.DataFrame, symbol: str,
                     # Actions = exercice américain → greeks via arbre CRR (cohérent avec
                     # le pricing). Carry dérivé du forward estimé (parité put-call).
                     carry = rate - math.log(F / S) / T
-                    row["delta"], row["gamma"], row["vega"], row["theta"] = \
-                        greeks_american(S, K, iv, T, rate, carry, r)
+                    (row["delta"], row["gamma"], row["vega"], row["theta"],
+                     row["rho"]) = greeks_american(S, K, iv, T, rate, carry, r)
                 else:
                     row["delta"] = bs_delta(F, K, iv, T, rate, r, S)
                     row["gamma"] = bs_gamma(F, K, iv, T, rate, S)
                     row["vega"]  = bs_vega(F, K, iv, T, rate)
                     row["theta"] = bs_theta(F, K, iv, T, rate, r)
+                    row["rho"]   = bs_rho(F, K, iv, T, rate, r)
                 # Greeks monetises (en devise EUR) via le multiplicateur (10 indice / 100 actions).
                 row["eur_delta"] = row["delta"] * mult * S       # cash delta (notionnel EUR)
                 row["eur_gamma"] = row["gamma"] * mult * S * S    # gamma monetise
                 row["eur_vega"]  = row["vega"] * mult              # EUR par point de vol
                 row["eur_theta"] = row["theta"] * mult            # EUR par jour
+                row["eur_rho"]   = row["rho"] * mult              # EUR par point de taux
             return row
         chain_df = chain_df.apply(add_greeks, axis=1)
 

@@ -37,10 +37,12 @@ _GRID_COLUMNS = [
     {"name": ["Greeks bruts", "Γ"],   "id": "gamma",    "type": "numeric", "format": {"specifier": ".5f"}},
     {"name": ["Greeks bruts", "ν"],   "id": "vega",     "type": "numeric", "format": _FMT4},
     {"name": ["Greeks bruts", "Θ"],   "id": "theta",    "type": "numeric", "format": _FMT4},
+    {"name": ["Greeks bruts", "ρ"],   "id": "rho",      "type": "numeric", "format": _FMT4},
     {"name": ["Greeks € (monétisés)", "Δ €"], "id": "eur_delta", "type": "numeric", "format": _FMT2},
     {"name": ["Greeks € (monétisés)", "Γ €"], "id": "eur_gamma", "type": "numeric", "format": _FMT2},
     {"name": ["Greeks € (monétisés)", "ν €"], "id": "eur_vega",  "type": "numeric", "format": _FMT2},
     {"name": ["Greeks € (monétisés)", "Θ €"], "id": "eur_theta", "type": "numeric", "format": _FMT2},
+    {"name": ["Greeks € (monétisés)", "ρ €"], "id": "eur_rho",   "type": "numeric", "format": _FMT2},
     # Lecture desk : risque normalisé pour un mouvement de +1% du spot (convention
     # hedge fund / dealing desk ; cohérent avec le dollar-gamma /100 de la roadmap).
     {"name": ["Lecture desk (+1% spot)", "P&L Δ"],   "id": "pnl_delta_1pct",
@@ -61,6 +63,7 @@ _POS_COLUMNS = [
     {"name": "Γ portef.","id": "portfolio_gamma"},
     {"name": "ν portef.","id": "portfolio_vega"},
     {"name": "Θ portef.","id": "portfolio_theta"},
+    {"name": "ρ portef.","id": "portfolio_rho"},
     {"name": "PnL",      "id": "pnl_approx"},
 ]
 
@@ -84,22 +87,27 @@ layout = dbc.Container([
                 html.Div(dcc.Markdown(r"$$\Delta_{EUR} = \Delta \times mult \times S$$",
                                       mathjax=True), className="formula-box"),
                 html.Small("cash delta (€)", className="text-muted"),
-            ], width=3),
+            ]),
             dbc.Col([
                 html.Div(dcc.Markdown(r"$$\Gamma_{EUR} = \Gamma \times mult \times S^2$$",
                                       mathjax=True), className="formula-box"),
                 html.Small("gamma monétisé (€)", className="text-muted"),
-            ], width=3),
+            ]),
             dbc.Col([
                 html.Div(dcc.Markdown(r"$$\nu_{EUR} = \nu \times mult$$",
                                       mathjax=True), className="formula-box"),
                 html.Small("€ par point de vol", className="text-muted"),
-            ], width=3),
+            ]),
             dbc.Col([
                 html.Div(dcc.Markdown(r"$$\Theta_{EUR} = \Theta \times mult$$",
                                       mathjax=True), className="formula-box"),
                 html.Small("€ par jour calendaire", className="text-muted"),
-            ], width=3),
+            ]),
+            dbc.Col([
+                html.Div(dcc.Markdown(r"$$\rho_{EUR} = \rho \times mult$$",
+                                      mathjax=True), className="formula-box"),
+                html.Small("€ par point de taux", className="text-muted"),
+            ]),
         ])),
     ], className="card mb-4"),
 
@@ -140,6 +148,9 @@ layout = dbc.Container([
                 "±1% (½·Γ €·(1%)², toujours positif si long gamma) · var. Δ € = déplacement du cash ",
                 "delta pour +1% (Γ €/100) · ν € = P&L par +1 pt de vol · Θ € = P&L par jour calendaire. ",
                 "P&L total d'un mouvement de ±1% ≈ ±P&L Δ + P&L Γ. ",
+                "ρ = sensibilité au TAUX d'intérêt, par +1 pt de taux (ρ € = ρ×mult) : "
+                "un call s'apprécie quand les taux montent, un put se déprécie ; l'effet "
+                "croît avec la maturité (ρ ∝ K·T·e⁻ʳᵀ). ",
                 "Volumétrie : Bid sz / Ask sz = nb de contrats disponibles AU bid / À "
                 "l'ask (profondeur du 1er niveau du carnet — la liquidité exécutable "
                 "maintenant ; un 1×1 est fragile, un 150×200 est ferme) · Volume = "
