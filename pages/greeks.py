@@ -51,6 +51,10 @@ _GRID_COLUMNS = [
      "type": "numeric", "format": _FMT2},
     {"name": ["Lecture desk (+1% spot)", "var. Δ €"], "id": "shift_delta_1pct",
      "type": "numeric", "format": _FMT2},
+    # « Le Reste » (demande du prof) : les greeks expliquent ~95 % du P&L —
+    # Reste € = P&L exact par repricing complet à +1 % − (P&L Δ + P&L Γ).
+    {"name": ["Lecture desk (+1% spot)", "Reste €"], "id": "reste_1pct",
+     "type": "numeric", "format": _FMT2},
 ]
 
 _POS_COLUMNS = [
@@ -66,6 +70,53 @@ _POS_COLUMNS = [
     {"name": "ρ portef.","id": "portfolio_rho"},
     {"name": "PnL",      "id": "pnl_approx"},
 ]
+
+def _pricing_context(sym):
+    """(taux, américain ?) du produit — taux de la config, exercice selon sec_type."""
+    from src.utils.config import load_config
+    rate = load_config("pricing").get("risk_free_rate", {}).get("value", 0.025)
+    und = next((u for u in datasource._get_universe_cfg().get("underlyings", [])
+                if u.get("symbol") == sym), {})
+    return rate, und.get("sec_type", "STK") == "STK"
+
+
+def _exact_repricing_pnl(sub, rate, american, s=0.0, dv=0.0, dt_eff=None):
+    """P&L EXACT par repricing complet sous le choc (€/contrat, modèle base →
+    modèle choqué) — la référence contre laquelle on mesure « le Reste » que les
+    greeks (Eq.19) n'expliquent pas : termes d'ordre supérieur et croisés
+    (speed, vanna, volga, charm…), typiquement ~5 % du P&L."""
+    import math as _m
+    from src.pricing.european import bs_price
+    from src.pricing.american import price_american_binomial
+    out = pd.Series(float("nan"), index=sub.index)
+    for idx, r in sub.iterrows():
+        try:
+            iv = float(r["implied_vol"]); T = float(r["maturity_years"])
+            F = float(r["forward"]); K = float(r["strike"])
+            right = str(r["right"]); mult = float(r.get("multiplier") or 100)
+            S = float(r.get("reference_spot") or 0)
+            if not (iv > 0 and T > 0 and F > 0 and K > 0):
+                continue
+            sig2 = max(iv + dv, 0.005)
+            dt_y = (float(dt_eff.loc[idx]) / 365.0) if dt_eff is not None else 0.0
+            T2 = max(T - dt_y, 0.0)
+            if american and S > 0:
+                q = rate - _m.log(F / S) / T
+                v0 = price_american_binomial(S, K, iv, T, rate, q, right, 200).price
+                if T2 > 1e-9:
+                    v1 = price_american_binomial(S * (1 + s), K, sig2, T2, rate,
+                                                 q, right, 200).price
+                else:
+                    v1 = (max(S * (1 + s) - K, 0.0) if right.upper().startswith("C")
+                          else max(K - S * (1 + s), 0.0))
+            else:
+                v0 = bs_price(F, K, iv, T, rate, right)
+                v1 = bs_price(F * (1 + s), K, sig2, T2, rate, right)
+            out[idx] = (v1 - v0) * mult
+        except Exception:
+            pass
+    return out
+
 
 layout = dbc.Container([
     html.Div([
@@ -147,7 +198,10 @@ layout = dbc.Container([
                 "P&L Δ = gain/perte ≈ pour +1% de spot (Δ €/100) · P&L Γ = gain de convexité pour ",
                 "±1% (½·Γ €·(1%)², toujours positif si long gamma) · var. Δ € = déplacement du cash ",
                 "delta pour +1% (Γ €/100) · ν € = P&L par +1 pt de vol · Θ € = P&L par jour calendaire. ",
-                "P&L total d'un mouvement de ±1% ≈ ±P&L Δ + P&L Γ. ",
+                "P&L total d'un mouvement de ±1% ≈ ±P&L Δ + P&L Γ + Reste. ",
+                "Reste € = P&L exact (REPRICING complet à +1%) − P&L Δ − P&L Γ : la part "
+                "du P&L que les greeks n'expliquent PAS (ordres supérieurs : speed, "
+                "convexités croisées) — les greeks en expliquent typiquement ~95-99 %. ",
                 "ρ = sensibilité au TAUX d'intérêt, par +1 pt de taux (ρ € = ρ×mult) : "
                 "un call s'apprécie quand les taux montent, un put se déprécie ; l'effet "
                 "croît avec la maturité (ρ ∝ K·T·e⁻ʳᵀ). ",
@@ -276,6 +330,13 @@ def refresh_grid(expiry, symbol, _):
         # comme à la baisse — s'AJOUTE au P&L Δ pour le P&L total du mouvement).
         sub = sub.assign(shift_delta_1pct=sub["eur_gamma"] / 100.0,
                          pnl_gamma_1pct=sub["eur_gamma"] / 20000.0)
+    # « Le Reste » en € : P&L exact par repricing complet à +1 % de spot, moins la
+    # part expliquée par Δ et Γ — ce sont les ordres supérieurs (speed, etc.).
+    if {"pnl_delta_1pct", "pnl_gamma_1pct", "implied_vol", "forward"}.issubset(sub.columns):
+        rate, american = _pricing_context(sym)
+        exact = _exact_repricing_pnl(sub, rate, american, s=0.01)
+        sub = sub.assign(reste_1pct=exact - sub["pnl_delta_1pct"].fillna(0)
+                                          - sub["pnl_gamma_1pct"].fillna(0))
 
     def scatter_fig(col, ytitle, fmt=".4f"):
         fig = go.Figure()
@@ -349,25 +410,42 @@ def refresh_shock(s_pct, dvol, days, expiry, symbol):
            + sub["eur_vega"].fillna(0) * dv
            + pnl_theta)
 
+    # « Le Reste » (demande du prof) : P&L EXACT par repricing complet sous le même
+    # choc — l'écart avec l'approximation greeks = les ordres supérieurs, en €.
+    rate, american = _pricing_context(sym)
+    exact = _exact_repricing_pnl(sub, rate, american, s=s, dv=dv / 100.0,
+                                 dt_eff=pd.Series(dt_eff, index=sub.index))
+    reste = exact - pnl
+
     labels = [f"{k:g} {r}" for k, r in zip(sub["strike"], sub["right"])]
     fig.add_trace(go.Bar(
-        x=labels, y=pnl,
+        x=labels, y=pnl, name="Greeks (Eq.19)",
         marker_color=["#1a7f37" if v >= 0 else "#cf222e" for v in pnl],
-        hovertemplate="%{x}<br>P&L ≈ %{y:,.0f} €<extra></extra>",
+        hovertemplate="%{x}<br>P&L greeks ≈ %{y:,.0f} €<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=labels, y=exact, name="Repricing exact", mode="markers",
+        marker=dict(symbol="diamond", size=8, color="#0969da",
+                    line=dict(width=1, color="#ffffff")),
+        hovertemplate="%{x}<br>P&L exact = %{y:,.0f} €<extra></extra>",
     ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         height=280, margin=dict(l=45, r=10, t=8, b=60), font=dict(size=11),
         xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
-        yaxis_title="P&L approx. (€ / contrat)",
+        yaxis_title="P&L (€ / contrat)",
+        legend=dict(orientation="h", y=1.15, font=dict(size=10)),
     )
 
     total = float(pnl.sum())
+    total_exact = float(exact.sum()) if exact.notna().any() else float("nan")
+    total_reste = float(reste.sum()) if reste.notna().any() else float("nan")
     decomp = [
         ("Δ (directionnel)", float((sub["eur_delta"] * s).sum())),
         ("Γ (convexité)",    float((0.5 * sub["eur_gamma"].fillna(0) * s ** 2).sum())),
         ("ν (vol)",          float((sub["eur_vega"].fillna(0) * dv).sum())),
         ("Θ (temps, borné)", float(pnl_theta.sum())),
+        ("Reste (ordres sup.)", total_reste),
     ]
     # Garde-fou : l'approximation greeks (Eq.19) est locale — pour des chocs
     # extrêmes le repricing complet (page Scénarios, source de vérité roadmap)
@@ -380,14 +458,22 @@ def refresh_shock(s_pct, dvol, days, expiry, symbol):
             color="warning", className="py-1 px-2 mt-2 mb-0",
             style={"fontSize": "0.72rem"})
 
+    pct_explained = (100.0 * total / total_exact
+                     if total_exact == total_exact and abs(total_exact) > 50 else None)
     summary = html.Div([
-        _mb(f"{total:,.0f} €", "P&L total (1 contrat de chaque)",
-            "positive" if total >= 0 else "negative"),
+        _mb(f"{total_exact:,.0f} €" if total_exact == total_exact else "—",
+            "P&L EXACT (repricing complet)",
+            "positive" if total_exact >= 0 else "negative"),
         html.Div([html.Div([
             html.Span(name + " : ", className="text-muted small"),
-            html.Span(f"{v:,.0f} €", className="small fw-bold",
+            html.Span(f"{v:,.0f} €" if v == v else "—", className="small fw-bold",
                       style={"color": "#1a7f37" if v >= 0 else "#cf222e"}),
         ]) for name, v in decomp], className="mt-2"),
+        html.Div(html.Small(
+            f"Les greeks expliquent {pct_explained:.1f} % du P&L exact"
+            if pct_explained is not None else
+            "Choc trop petit pour un % d'explication significatif",
+            className="text-muted fst-italic"), className="mt-1"),
         warning,
     ])
     return fig, summary
