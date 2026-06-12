@@ -21,9 +21,13 @@ _GRID_COLUMNS = [
     {"name": ["", "Expiry"],          "id": "expiry"},
     {"name": ["", "Strike"],          "id": "strike",   "type": "numeric", "format": _FMT2},
     {"name": ["", "C/P"],             "id": "right"},
+    {"name": ["Cotation", "Bid sz"],  "id": "bid_size", "type": "numeric",
+     "format": {"specifier": ",.0f"}},
     {"name": ["Cotation", "Bid"],     "id": "bid",      "type": "numeric", "format": _FMT4},
     {"name": ["Cotation", "Mid"],     "id": "mid_price","type": "numeric", "format": _FMT4},
     {"name": ["Cotation", "Ask"],     "id": "ask",      "type": "numeric", "format": _FMT4},
+    {"name": ["Cotation", "Ask sz"],  "id": "ask_size", "type": "numeric",
+     "format": {"specifier": ",.0f"}},
     {"name": ["Volumétrie", "Volume"],"id": "volume",   "type": "numeric",
      "format": {"specifier": ",.0f"}},
     {"name": ["Volumétrie", "OI"],    "id": "open_interest", "type": "numeric",
@@ -136,10 +140,12 @@ layout = dbc.Container([
                 "±1% (½·Γ €·(1%)², toujours positif si long gamma) · var. Δ € = déplacement du cash ",
                 "delta pour +1% (Γ €/100) · ν € = P&L par +1 pt de vol · Θ € = P&L par jour calendaire. ",
                 "P&L total d'un mouvement de ±1% ≈ ±P&L Δ + P&L Γ. ",
-                "Volumétrie : Volume = contrats échangés aujourd'hui (flux différé 15 min, "
-                "souvent vide en début de séance sur les séries hors monnaie) · OI = open "
-                "interest, positions ouvertes — plus c'est élevé, plus le bid/ask (et donc "
-                "l'IV et les greeks qui en découlent) est digne de confiance.",
+                "Volumétrie : Bid sz / Ask sz = nb de contrats disponibles AU bid / À "
+                "l'ask (profondeur du 1er niveau du carnet — la liquidité exécutable "
+                "maintenant ; un 1×1 est fragile, un 150×200 est ferme) · Volume = "
+                "contrats échangés aujourd'hui (différé 15 min) · OI = open interest, "
+                "positions ouvertes. Plus la volumétrie est étoffée, plus le mid (et "
+                "donc l'IV et les greeks qui en découlent) est digne de confiance.",
             ], className="text-muted d-block mt-2"),
         ]),
     ], className="card mb-4"),

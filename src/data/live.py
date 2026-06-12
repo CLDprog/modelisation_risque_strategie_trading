@@ -136,6 +136,10 @@ def _build_quote_row(symbol, expiry, strike, right, s, spot, F, T,
         "right":             right,
         "bid":               round(bid, 4) if _valid_num(bid) else None,
         "ask":               round(ask, 4) if _valid_num(ask) else None,
+        # Volumétrie au premier niveau du carnet : nb de contrats AU bid / À l'ask
+        # (la liquidité exécutable maintenant — ≠ volume déjà traité dans la journée)
+        "bid_size":          s.get("bid_size") if _valid_num(s.get("bid_size")) else None,
+        "ask_size":          s.get("ask_size") if _valid_num(s.get("ask_size")) else None,
         "last":              round(last, 4) if last_ok else None,
         "mid_price":         round(mid, 4) if mid is not None else None,
         "open_interest":     oi if _valid_num(oi) else None,
@@ -254,7 +258,8 @@ def fetch_option_chain(adapter: BrokerAdapter, symbol: str,
     # 2) UN SEUL snapshot groupe pour toutes les options du symbole (rapide).
     # Greeks broker inclus (diagnostic + réconciliation QC — roadmap Step 11).
     snaps = adapter.snapshot(list(conid_map.values()),
-                             ["bid", "ask", "last", "close", "volume", "open_interest",
+                             ["bid", "ask", "bid_size", "ask_size", "last", "close",
+                              "volume", "open_interest",
                               "delta", "gamma", "vega", "theta", "iv"])
 
     # 3) Construction des lignes (schema stable, call ET put par strike).
