@@ -132,8 +132,21 @@ class DataSource:
         return ParquetStore(_DATA_DIR / "analytics")
 
     def _read_analytics(self, table: str, dt: Optional[date] = None) -> pd.DataFrame:
+        """Lit une table analytics. Sans date explicite : partition du JOUR, sinon
+        FALLBACK sur la plus récente disponible (≤ 5 jours) — chaque matin, les
+        tables du jour n'existent qu'à la fin du premier cycle ; on affiche les
+        dernières données connues plutôt que des pages vides (le badge de
+        fraîcheur de la sidebar indique déjà l'état du collecteur)."""
+        from datetime import timedelta
         try:
-            return self._analytics_store().read(table, dt or date.today())
+            store = self._analytics_store()
+            if dt is not None:
+                return store.read(table, dt)
+            for back in range(6):
+                d = date.today() - timedelta(days=back)
+                if store.partition_exists(table, d):
+                    return store.read(table, d)
+            return pd.DataFrame()
         except Exception as exc:
             logger.debug(f"lecture store ({table}): {exc}")
             return pd.DataFrame()
