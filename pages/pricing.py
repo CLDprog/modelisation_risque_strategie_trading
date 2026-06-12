@@ -194,6 +194,7 @@ def update_pricing(spot, strike, vol_pct, days, rate_pct, right, symbol):
                 _gbox("Γ", "Gamma",  f"{euro.gamma:.8f}",  "d²P/dS²"),
                 _gbox("ν", "Vega",   f"{euro.vega:.6f}",   "dP/dσ (par 1 pt de vol)"),
                 _gbox("Θ", "Theta",  f"{euro.theta:.6f}",  "dP/dt (par jour)"),
+                _gbox("ρ", "Rho",    f"{euro.rho:.6f}",    "dP/dr (par 1 pt de taux)"),
             ], className="g-3")),
         ], className="card mb-4"),
 
@@ -204,6 +205,7 @@ def update_pricing(spot, strike, vol_pct, days, rate_pct, right, symbol):
                 _gbox("Γ", "Gamma €", f"{euro.gamma * mult * spot**2:,.2f} €", "Γ × mult × S²"),
                 _gbox("ν", "Vega €",  f"{euro.vega * mult:,.2f} €",            "ν × mult (par pt de vol)"),
                 _gbox("Θ", "Theta €", f"{euro.theta * mult:,.2f} €",           "Θ × mult (par jour)"),
+                _gbox("ρ", "Rho €",   f"{euro.rho * mult:,.2f} €",             "ρ × mult (par pt de taux)"),
             ], className="g-3")),
         ], className="card"),
     ])

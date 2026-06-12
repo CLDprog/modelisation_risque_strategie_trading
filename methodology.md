@@ -294,6 +294,22 @@ Short vol indice / long vol composantes, **vega-weighted** (vega net ≈ 0) :
 
 ---
 
+### Complément aux Eq. 13-18 — rho (ajout demandé en cours)
+
+$$\rho_{call} = K\,T\,e^{-rT}\,N(d_2)\times 0.01 \qquad
+\rho_{put} = -K\,T\,e^{-rT}\,N(-d_2)\times 0.01$$
+
+Sensibilité au taux d'intérêt, exprimée **par point de taux** (même convention que le
+vega par point de vol), spot tenu fixe (le forward $F = S e^{(r-q)T}$ se réapprécie
+avec $r$). Parité : $\rho_C - \rho_P = K T e^{-rT}\times0.01$. Pour les options
+**américaines**, rho est obtenu par re-pricing de l'arbre CRR avec taux ET carry
+bumpés ensemble ($q$ fixe — convention identique). Monétisation : $\rho_{EUR} =
+\rho \times mult$. Implémenté dans `bs_rho` (european.py), `greeks_american`
+(american.py), la chaîne enrichie (`rho`/`eur_rho` dans iv_points) et le risque de
+position (`portfolio_rho`).
+
+---
+
 ## Conventions du projet
 
 | Quantité | Convention |
