@@ -17,3 +17,6 @@ logs/
 env/
 venv/
 .python-version
+
+# Fichiers verrous Word/Office
+~$*
