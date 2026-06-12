@@ -43,18 +43,24 @@ _GRID_COLUMNS = [
     {"name": ["Greeks € (monétisés)", "ν €"], "id": "eur_vega",  "type": "numeric", "format": _FMT2},
     {"name": ["Greeks € (monétisés)", "Θ €"], "id": "eur_theta", "type": "numeric", "format": _FMT2},
     {"name": ["Greeks € (monétisés)", "ρ €"], "id": "eur_rho",   "type": "numeric", "format": _FMT2},
-    # Lecture desk : risque normalisé pour un mouvement de +1% du spot (convention
-    # hedge fund / dealing desk ; cohérent avec le dollar-gamma /100 de la roadmap).
-    {"name": ["Lecture desk (+1% spot)", "P&L Δ"],   "id": "pnl_delta_1pct",
-     "type": "numeric", "format": _FMT2},
-    {"name": ["Lecture desk (+1% spot)", "P&L Γ"],   "id": "pnl_gamma_1pct",
-     "type": "numeric", "format": _FMT2},
-    {"name": ["Lecture desk (+1% spot)", "var. Δ €"], "id": "shift_delta_1pct",
-     "type": "numeric", "format": _FMT2},
+    # Lecture desk : P&L de CHAQUE greek pour le mouvement standard de SON facteur
+    # (+1 % de spot, +1 pt de vol, 1 jour, +1 pt de taux) — convention dealing desk.
+    {"name": ["Lecture desk (mouvements standards)", "P&L Δ (+1% S)"],
+     "id": "pnl_delta_1pct", "type": "numeric", "format": _FMT2},
+    {"name": ["Lecture desk (mouvements standards)", "P&L Γ (±1% S)"],
+     "id": "pnl_gamma_1pct", "type": "numeric", "format": _FMT2},
+    {"name": ["Lecture desk (mouvements standards)", "P&L ν (+1pt σ)"],
+     "id": "pnl_vega_1pt", "type": "numeric", "format": _FMT2},
+    {"name": ["Lecture desk (mouvements standards)", "P&L Θ (1 jour)"],
+     "id": "pnl_theta_1d", "type": "numeric", "format": _FMT2},
+    {"name": ["Lecture desk (mouvements standards)", "P&L ρ (+1pt r)"],
+     "id": "pnl_rho_1pt", "type": "numeric", "format": _FMT2},
+    {"name": ["Lecture desk (mouvements standards)", "var. Δ € (+1% S)"],
+     "id": "shift_delta_1pct", "type": "numeric", "format": _FMT2},
     # « Le Reste » (demande du prof) : les greeks expliquent ~95 % du P&L —
     # Reste € = P&L exact par repricing complet à +1 % − (P&L Δ + P&L Γ).
-    {"name": ["Lecture desk (+1% spot)", "Reste €"], "id": "reste_1pct",
-     "type": "numeric", "format": _FMT2},
+    {"name": ["Lecture desk (mouvements standards)", "Reste € (+1% S)"],
+     "id": "reste_1pct", "type": "numeric", "format": _FMT2},
 ]
 
 _POS_COLUMNS = [
@@ -198,7 +204,10 @@ layout = dbc.Container([
                 "P&L Δ = gain/perte ≈ pour +1% de spot (Δ €/100) · P&L Γ = gain de convexité pour ",
                 "±1% (½·Γ €·(1%)², toujours positif si long gamma) · var. Δ € = déplacement du cash ",
                 "delta pour +1% (Γ €/100) · ν € = P&L par +1 pt de vol · Θ € = P&L par jour calendaire. ",
-                "P&L total d'un mouvement de ±1% ≈ ±P&L Δ + P&L Γ + Reste. ",
+                "Lecture desk : chaque P&L correspond au mouvement STANDARD de son "
+                "facteur — P&L Δ et Γ pour ±1% de spot, P&L ν pour +1 pt de vol, "
+                "P&L Θ pour 1 jour qui passe, P&L ρ pour +1 pt de taux. "
+                "P&L total d'un mouvement de ±1% de spot ≈ ±P&L Δ + P&L Γ + Reste. ",
                 "Reste € = P&L exact (REPRICING complet à +1%) − P&L Δ − P&L Γ : la part "
                 "du P&L que les greeks n'expliquent PAS (ordres supérieurs : speed, "
                 "convexités croisées) — les greeks en expliquent typiquement ~95-99 %. ",
@@ -330,6 +339,15 @@ def refresh_grid(expiry, symbol, _):
         # comme à la baisse — s'AJOUTE au P&L Δ pour le P&L total du mouvement).
         sub = sub.assign(shift_delta_1pct=sub["eur_gamma"] / 100.0,
                          pnl_gamma_1pct=sub["eur_gamma"] / 20000.0)
+    # P&L des autres greeks pour le mouvement standard de LEUR facteur : les € greeks
+    # sont déjà exprimés par unité standard (ν€/pt de vol, Θ€/jour, ρ€/pt de taux)
+    # → le P&L du mouvement unitaire leur est égal ; colonnes explicites côté desk.
+    if "eur_vega" in sub.columns:
+        sub = sub.assign(pnl_vega_1pt=sub["eur_vega"])
+    if "eur_theta" in sub.columns:
+        sub = sub.assign(pnl_theta_1d=sub["eur_theta"])
+    if "eur_rho" in sub.columns:
+        sub = sub.assign(pnl_rho_1pt=sub["eur_rho"])
     # « Le Reste » en € : P&L exact par repricing complet à +1 % de spot, moins la
     # part expliquée par Δ et Γ — ce sont les ordres supérieurs (speed, etc.).
     if {"pnl_delta_1pct", "pnl_gamma_1pct", "implied_vol", "forward"}.issubset(sub.columns):
