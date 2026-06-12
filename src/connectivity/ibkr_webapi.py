@@ -68,6 +68,8 @@ def _archive_payload(kind: str, key: str, payload) -> None:
 _FIELD_TO_KEY = {
     "bid":           "bid_price",            # 84
     "ask":           "ask_price",            # 86
+    "bid_size":      "bid_size",             # 88 — profondeur au bid (volumétrie)
+    "ask_size":      "ask_size",             # 85 — profondeur à l'ask (volumétrie)
     "last":          "last_price",           # 31
     "close":         "close",                # 7296
     "high":          "high",                 # 70
