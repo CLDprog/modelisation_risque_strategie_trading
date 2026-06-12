@@ -314,21 +314,32 @@ def check_carry_consistency(forward_df: pd.DataFrame, underlying_symbol: str,
         return QcResult("carry_consistency", underlying_symbol, "warn", "warning",
                         float("nan"), max_abs_total_carry, "no_carry_estimates", {})
 
+    # Deux régimes : T < 6 mois → borne sur le DÉPORT TOTAL |q·T| (robuste aux
+    # dividendes discrets) ; T ≥ 6 mois → borne sur le taux ANNUALISÉ (sur 2 ans,
+    # une banque à 8-9 %/an de dividendes CUMULE 16-18 % de déport total légitime —
+    # ISP/BNP/UCG le 12/06 — alors que son taux annualisé reste dans les bornes).
     total = (carries * mats).abs()                       # déport total |q·T|
-    bad_total = total > max_abs_total_carry
-    bad_annual = (mats >= 0.5) & ~carries.between(min_carry, max_carry)
+    short, long_ = mats < 0.5, mats >= 0.5
+    bad_total = short & (total > max_abs_total_carry)
+    bad_annual = long_ & ~carries.between(min_carry, max_carry)
     n_out = int((bad_total | bad_annual).sum())
-    worst = float(total.max())
+    # Valeur mesurée = pire ratio normalisé violation/seuil (1.0 = à la borne)
+    ratios = pd.concat([total[short] / max_abs_total_carry,
+                        carries[long_].abs() / max_carry])
+    worst = float(ratios.max()) if not ratios.empty else 0.0
     status = "pass" if n_out == 0 else "warn"
     return QcResult("carry_consistency", underlying_symbol, status,
                     "info" if status == "pass" else "warning",
-                    round(worst, 5), round(max_abs_total_carry, 5),
+                    round(worst, 5), 1.0,
                     "ok" if status == "pass" else "carry_out_of_bounds",
                     {"n_maturities": len(carries), "n_out_of_bounds": n_out,
-                     "worst_total_carry": round(worst, 5),
-                     "worst_annualized": round(float(carries.abs().max()), 5),
+                     "worst_total_carry_short": round(float(total[short].max()), 5)
+                     if short.any() else None,
+                     "worst_annualized_long": round(float(carries[long_].abs().max()), 5)
+                     if long_.any() else None,
                      "carry_median": round(float(carries.median()), 5),
-                     "bounds_annualized_T>=0.5": [min_carry, max_carry]})
+                     "bounds": {"total_T<0.5": max_abs_total_carry,
+                                "annualized_T>=0.5": [min_carry, max_carry]}})
 
 
 def check_broker_greeks_reconciliation(iv_points_df: pd.DataFrame,
