@@ -691,7 +691,14 @@ class IBKRWebAdapter(BrokerAdapter):
                 break
             if n_ready == ready_prev:
                 plateau += 1
-                if attempt + 1 >= min_attempts and plateau >= plateau_limit:
+                # ⚠️ Un plateau à ZÉRO prix n'est PAS un plateau : c'est un lot encore
+                # FROID dont la souscription n'a pas propagé (le flux différé n'a rien
+                # livré). De vraies ailes mortes renverraient au moins un close (=prix)
+                # → un compte PARTIEL stable. On ne court-circuite donc sur plateau que
+                # si ≥1 prix est arrivé ; tant que c'est 0, on attend jusqu'au plafond
+                # (constaté 2026-06-12 : lots 0/30 abandonnés à 8 essais → ALV/BMW/ABI
+                # à demi-collectés, forwards en échec).
+                if n_ready > 0 and attempt + 1 >= min_attempts and plateau >= plateau_limit:
                     # INFO (pas debug) : un lot qui plafonne bas = signal opérateur
                     # (farm lent / saturation) à voir sans relancer en DEBUG.
                     logger.info(f"snapshot: plateau à {n_ready}/{len(conids)} prix "
@@ -700,6 +707,13 @@ class IBKRWebAdapter(BrokerAdapter):
             else:
                 ready_prev, plateau = n_ready, 0
             time.sleep(sleep_s)
+        else:
+            # Boucle épuisée sans complétude ni plateau : lot resté froid (0 prix)
+            # malgré le plafond, ou farm anormalement lent — signal opérateur.
+            n_ready = sum(1 for c in conids if is_ready(out.get(int(c))))
+            if n_ready < len(conids):
+                logger.info(f"snapshot: {n_ready}/{len(conids)} prix après "
+                            f"{max_attempts} essais (plafond)")
 
     def unsubscribe_all_marketdata(self) -> bool:
         """Vide le pool de souscriptions market data de la session gateway.
