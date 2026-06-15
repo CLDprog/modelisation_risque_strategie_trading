@@ -6,9 +6,10 @@ Document exigé par la roadmap (Step 16). État au **2026-06-10** (univers EURO 
 
 | Sous-jacent | Situation | Traitement |
 |-------------|-----------|------------|
-| **NDA (Nordea)** | Conid HEX correct (ticker IBKR `NDA FI`) mais **aucune donnée** (spot/close vides) : le compte paper n'a pas l'entitlement **Nasdaq Nordic**. Options uniquement sur OMS Stockholm en **SEK** (rien sur EUREX). | Gardé dans l'univers (les 50 composantes y sont) ; collecte flaguée indisponible par le QC. Solution éventuelle : souscrire les données Nasdaq Nordic dans la gestion de compte IBKR. |
+| **NDA (Nordea)** | Conid HEX correct (ticker IBKR `NDA FI`) mais **aucune donnée** (spot/close vides) : le compte paper n'a pas l'entitlement **Nasdaq Nordic**. Listings alternatifs testés le 2026-06-15 et écartés : `NDA SS`/`NDA FI` (pas de données ou mauvais appariement), ADR US `NRDBY` (mauvaise place, ni composante SX5E ni options EUREX). Le ticker `NDA` seul renvoie Aurubis/Neptune, pas Nordea. | **Gardé dans l'univers — décision assumée** : Nordea EST une composante officielle du SX5E (condition du professeur = les 50 composantes exactes). Collecte flaguée indisponible par le QC ; 49/50 noms collectés. Seule solution : souscrire les données Nasdaq Nordic dans la gestion de compte IBKR. |
 | **BBVA, IBE** | Pas d'options EUREX via IBKR ; options sur **MEFF** (`MEFFRV`). BBVA : 2 expiries seulement → couverture partielle de la grille (flaguée par le QC coverage). | `option_exchange: MEFFRV` dans `universe.yaml` (déviation « options EUREX » de la spec, documentée). |
 | **ARGX (Argenx)** | Pas d'options EUREX ; options sur **BELFOX** (dérivés Euronext Bruxelles, 6 expiries). | `option_exchange: BELFOX` dans `universe.yaml` (déviation documentée). |
+| **RACE (Ferrari)** | Chaîne EUREX quasi vide (3 expiries / 17 strikes) ; vrai marché d'options sur **IDEM** (Borsa Italiana : 8 expiries / 267 strikes, constaté 2026-06-15). | `option_exchange: IDEM` dans `universe.yaml` (déviation documentée). |
 | **SAN (Sanofi)** | Le ticker IBKR de Sanofi sur SBF est **`SAN1`** (`SAN` seul résout l'ADR Santander NYSE). | `ibkr_symbol: SAN1` — résolu, 14 expiries EUREX. |
 
 ## Prérequis d'exploitation (à connaître)
