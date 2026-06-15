@@ -16,7 +16,7 @@ from typing import List, Optional, Dict
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from scipy.interpolate import UnivariateSpline
+from scipy.interpolate import PchipInterpolator
 from loguru import logger
 
 from src.pricing.european import bs_call
@@ -152,14 +152,34 @@ def fit_svi_slice(k: np.ndarray, w: np.ndarray,
 def _spline_fallback(k: np.ndarray, w: np.ndarray,
                      expiry: str, maturity_years: float,
                      n: int, max_rmse: float) -> SliceFitResult:
+    """Fallback quand le SVI échoue : interpolation SHAPE-PRESERVING (PCHIP, sans
+    overshoot) de la variance totale, évaluée UNIQUEMENT sur la plage observée et
+    bornée à l'enveloppe des points. Remplace UnivariateSpline (degré 3, lissage
+    minuscule) qui overshootait jusqu'à des variances absurdes (−9e12 constaté sur
+    AI 2028, points épars / quasi-dupliqués) → variance négative propagée au check
+    calendaire et à la surface. PCHIP est monotone par morceaux : aucune oscillation
+    entre les nœuds."""
     try:
-        order = min(3, n - 1)
-        spline = UnivariateSpline(k, w, k=order, s=len(k) * 1e-4)
-        w_hat = spline(k)
-        rmse = float(np.sqrt(np.mean((w_hat - w) ** 2)))
-        max_err = float(np.max(np.abs(w_hat - w)))
-        k_grid = np.linspace(k.min(), k.max(), 50)
-        w_grid = spline(k_grid)
+        # PCHIP exige des abscisses strictement croissantes : on trie et on fond les
+        # strikes au même log-moneyness (sinon pente quasi-verticale → blowup).
+        idx = np.argsort(k)
+        ks, ws = np.asarray(k, dtype=float)[idx], np.asarray(w, dtype=float)[idx]
+        uk, inv = np.unique(np.round(ks, 8), return_inverse=True)
+        if len(uk) < len(ks):
+            ws = np.array([ws[inv == i].mean() for i in range(len(uk))])
+            ks = uk
+        if len(ks) < 2:
+            raise ValueError("moins de 2 points distincts pour l'interpolation")
+
+        interp = PchipInterpolator(ks, ws, extrapolate=False)
+        k_grid = np.linspace(ks.min(), ks.max(), 50)
+        # Garde-fou : variance totale positive et dans l'enveloppe observée élargie.
+        # PCHIP n'overshoote pas — le clip est une ceinture+bretelles.
+        w_lo, w_hi = max(float(ws.min()) * 0.5, 1e-8), float(ws.max()) * 1.5
+        w_grid = np.clip(np.nan_to_num(interp(k_grid), nan=float(ws.mean())), w_lo, w_hi)
+        w_hat = np.clip(np.nan_to_num(interp(ks), nan=float(ws.mean())), w_lo, w_hi)
+        rmse = float(np.sqrt(np.mean((w_hat - ws) ** 2)))
+        max_err = float(np.max(np.abs(w_hat - ws)))
         sigma_grid = np.sqrt(np.maximum(w_grid / maturity_years, 0))
         return SliceFitResult(
             expiry=expiry, maturity_years=maturity_years,
