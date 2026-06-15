@@ -252,6 +252,8 @@ underlyings:
     sec_type: STK
     exchange: BVME
     currency: EUR
+    option_exchange: IDEM   # Ferrari : options sur IDEM (Borsa Italiana) — 8 echeances/267
+                            # strikes, vs seulement 3/17 sur EUREX (constate 2026-06-15)
     description: "Ferrari"
   - symbol: ISP
     sec_type: STK
