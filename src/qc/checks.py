@@ -136,14 +136,25 @@ def check_iv_convergence(iv_points_df: pd.DataFrame, underlying_symbol: str,
         return QcResult("iv_convergence", underlying_symbol, "fail", "error",
                         0.0, min_convergence_ratio, "no_iv_points", {})
 
-    ratio = float(df["converged"].mean()) if "converged" in df.columns else 0.0
+    # Dénominateur = quotes dont le prix admet une IV (au-dessus de l'intrinsèque) et
+    # usable. Une quote sous l'intrinsèque viole le no-arbitrage (donnée périmée) et
+    # n'a AUCUNE vol implicite : la compter contre la convergence reviendrait à blâmer
+    # le solveur pour un input insoluble. Backward-compat si les colonnes sont absentes.
+    pool = df
+    for col in ("is_usable", "iv_solvable"):
+        if col in pool.columns:
+            pool = pool[pool[col].fillna(True)]
+    if pool.empty:
+        pool = df
+    ratio = float(pool["converged"].mean()) if "converged" in pool.columns else 0.0
     status = "pass" if ratio >= min_convergence_ratio else ("warn" if ratio >= 0.9 else "fail")
     severity = {"pass": "info", "warn": "warning", "fail": "error"}[status]
 
     return QcResult("iv_convergence", underlying_symbol, status, severity,
                     ratio, min_convergence_ratio,
                     "low_convergence_ratio" if status != "pass" else "ok",
-                    {"convergence_ratio": ratio, "n_points": len(df)})
+                    {"convergence_ratio": ratio, "n_solvable": len(pool),
+                     "n_total": len(df)})
 
 
 def check_surface_fit(surface_result, underlying_symbol: str,

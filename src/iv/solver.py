@@ -129,7 +129,12 @@ def solve_iv(market_price: float, forward: float, strike: float,
         info = result_obj[1]
         iterations = info.iterations
         residual = abs(objective(solved_vol))
-        converged = residual < price_tol * 100
+        # Convergence jugée RELATIVEMENT au prix : un résidu de 4e-4 sur une option
+        # d'indice valant des dizaines d'euros = erreur relative ~1e-6 (vol correcte),
+        # mais l'ancien seuil ABSOLU price_tol*100 (=1e-4 en européen) la rejetait à
+        # tort — asymétrie avec l'américain (1e-3), d'où ESTX50 à 0.75. Seuil =
+        # max(plancher absolu, 0.1% du prix).
+        converged = residual < max(price_tol * 100, 1e-3 * abs(market_price))
 
         return IvSolveResult(
             contract_key=contract_key, snapshot_ts=snapshot_ts,
@@ -210,7 +215,9 @@ def solve_iv_american(market_price: float, spot: float, strike: float,
                             xtol=price_tol, maxiter=max_iter, full_output=True)
         solved = result_obj[0]
         residual = abs(objective(solved))
-        converged = residual < price_tol * 100
+        # Convergence relative au prix (cf. note dans le solveur européen) : seuil =
+        # max(plancher absolu price_tol*100, 0.1% du prix de marché).
+        converged = residual < max(price_tol * 100, 1e-3 * abs(market_price))
         return IvSolveResult(
             contract_key=contract_key, snapshot_ts=snapshot_ts,
             market_price=market_price, implied_vol=solved, converged=converged,
