@@ -316,13 +316,23 @@ def compute_live_analytics(chain_df: pd.DataFrame, symbol: str,
     # Update chain_df avec les IVs resolues (indexe par contract_key = instrument_key).
     if not iv_df.empty and "contract_key" in iv_df.columns:
         iv_unique = iv_df.drop_duplicates(subset="contract_key", keep="last")
-        iv_cols = [c for c in ("implied_vol", "total_variance", "converged", "forward")
+        iv_cols = [c for c in ("implied_vol", "total_variance", "converged", "forward",
+                               "failure_reason")
                    if c in iv_unique.columns]
         iv_map = iv_unique.set_index("contract_key")[iv_cols].to_dict("index")
         chain_df = chain_df.copy()
         chain_df["implied_vol"]    = chain_df["instrument_key"].map(lambda k: iv_map.get(k, {}).get("implied_vol"))
         chain_df["total_variance"] = chain_df["instrument_key"].map(lambda k: iv_map.get(k, {}).get("total_variance"))
         chain_df["converged"]      = chain_df["instrument_key"].map(lambda k: iv_map.get(k, {}).get("converged", False))
+        # Inversabilité : une quote dont le prix est <= valeur intrinsèque (ou <= 0)
+        # n'admet AUCUNE vol implicite — ce n'est pas un échec du solveur mais un input
+        # qui viole le no-arbitrage. Flaggée pour que le check de convergence ne la
+        # compte pas contre le ratio (elle reste tracée dans iv_diagnostics).
+        def _iv_solvable(k):
+            fr = str(iv_map.get(k, {}).get("failure_reason") or "")
+            return not (fr.startswith("below_intrinsic") or "non_positive" in fr
+                        or fr.startswith("zero_or_neg"))
+        chain_df["iv_solvable"] = chain_df["instrument_key"].map(_iv_solvable)
         # Forward de PARITÉ (celui utilisé par le solveur IV) — remplace l'estimation
         # préliminaire spot·e^{rT} pour que greeks et pricing_results soient cohérents
         # avec l'IV résolue (sinon erreur de round-trip systématique).
