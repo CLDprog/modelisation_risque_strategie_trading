@@ -35,6 +35,7 @@ PAGES = [
     {"name": "Greeks & Risk",          "href": "/greeks"},
     {"name": "Scénarios",              "href": "/scenarios"},
     {"name": "QC & Validation",        "href": "/qc"},
+    {"name": "Trading (paper)",        "href": "/trading"},
 ]
 
 sidebar = html.Div([

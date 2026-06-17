@@ -519,6 +519,71 @@ class Collector:
     # Un cycle complet
     # ------------------------------------------------------------------
 
+    def process_orders(self) -> None:
+        """Pont DASHBOARD → IBKR (le dashboard ne touche jamais le broker). Lit les
+        tickets en attente déposés par la page Trading, résout le conid, place ou
+        annule l'ordre via la session, et réécrit le statut. Publie aussi le blotter
+        (ordres vivants + positions). Appelé en début de cycle ET entre les symboles
+        (~40 s) pour une exécution rapide. Best-effort : une erreur sur un ticket ne
+        casse jamais la collecte."""
+        from src.trading import order_book as ob
+        from datetime import date as _date
+
+        pendings = ob.pending_tickets()
+        for t in pendings:
+            tid = t["ticket_id"]
+            try:
+                if t.get("status") == "cancel_requested":
+                    oid = t.get("broker_order_id")
+                    res = self.adapter.cancel_order(oid) if oid else {"ok": True}
+                    ob.update_ticket(tid, "cancelled" if res.get("ok") else "error",
+                                     message=res.get("message"))
+                    continue
+
+                instr = t["instrument"].upper()
+                if instr == "FUT":
+                    conid = self.adapter.resolve_front_future(t["underlying"])
+                    sec = "FUT"
+                else:
+                    u = next((x for x in self.universe_cfg.get("underlyings", [])
+                              if x.get("symbol") == t["underlying"]), {})
+                    und = self.adapter.resolve_underlying(
+                        u.get("ibkr_symbol", t["underlying"]),
+                        u.get("exchange", "SMART"), u.get("currency", "EUR"),
+                        u.get("sec_type", "STK"))
+                    conid = self.adapter.resolve_option(
+                        und, _date.fromisoformat(t["expiry"]), float(t["strike"]),
+                        instr, u.get("option_exchange")) if und else None
+                    sec = "OPT"
+                if not conid:
+                    ob.update_ticket(tid, "rejected", message="conid introuvable")
+                    continue
+
+                res = self.adapter.place_order(
+                    conid, t["side"], t["quantity"],
+                    order_type=t.get("order_type", "MKT"),
+                    price=t.get("limit_price"), sec_type=sec, tif=t.get("tif", "DAY"))
+                if res.get("ok"):
+                    ob.update_ticket(tid, "submitted",
+                                     broker_order_id=res.get("order_id"),
+                                     message=res.get("message"))
+                    logger.info(f"  ordre soumis : {t['side']} {t['quantity']} "
+                                f"{t['underlying']} {instr} (conid {conid})")
+                else:
+                    ob.update_ticket(tid, "rejected", message=res.get("message"))
+            except Exception as exc:  # noqa: BLE001
+                ob.update_ticket(tid, "error", message=str(exc)[:200])
+                logger.warning(f"  ticket {tid} : {exc}")
+
+        # Publie le blotter (best-effort) pour la page Trading
+        try:
+            orders = self.adapter.live_orders()
+            from dataclasses import asdict
+            positions = [asdict(p) for p in self.adapter.positions()]
+            ob.write_blotter(orders, positions)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"blotter: {exc}")
+
     def run_cycle(self) -> None:
         from src.surfaces.calibration import fit_surface, surface_params_to_dataframe
 
@@ -530,6 +595,10 @@ class Collector:
         all_iv, all_fwd, all_surf = [], [], []
         all_iv_diag, all_fwd_diag, all_pricing = [], [], []
         spots, surfaces = {}, {}
+
+        # Ordres en attente (page Trading) : traités en tête de cycle, puis entre
+        # chaque symbole, pour une exécution en ~40 s sans casser la collecte.
+        self.process_orders()
 
         # Vide le pool de souscriptions market data AVANT CHAQUE SYMBOLE : IBKR limite
         # à ~100 lignes simultanées et un symbole en consomme ~72 (chaîne + spot +
@@ -596,6 +665,8 @@ class Collector:
                 self._status["connected"] = True
             self._status["heartbeat"] = datetime.now(timezone.utc).isoformat()
             _atomic_write_json(STATUS_FILE, self._status)
+            # Ordres en attente : traités entre chaque symbole (exécution rapide).
+            self.process_orders()
             time.sleep(self.symbol_pause)
 
         # Écritures combinées (atomiques) + lineage (code_version/config_hash/run_id).

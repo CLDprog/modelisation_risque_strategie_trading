@@ -310,6 +310,17 @@ class DataSource:
         df = self._read_raw_history("dispersion_history", days)
         return df.sort_values("ts") if not df.empty and "ts" in df.columns else df
 
+    # -- Trading (carnet d'ordres — lecture seule, jamais d'appel IBKR) --------
+    def get_order_tickets(self) -> list:
+        """Tous les tickets d'ordres déposés (avec leur statut)."""
+        from src.trading.order_book import all_tickets
+        return all_tickets()
+
+    def get_blotter(self) -> dict:
+        """Blotter publié par le collecteur : ordres vivants IBKR + positions."""
+        from src.trading.order_book import read_blotter
+        return read_blotter()
+
     def get_scenarios(self, symbol: Optional[str] = None) -> pd.DataFrame:
         sym = (symbol or self._selected_symbol).upper()
         df = self._read_analytics("scenario_results")
