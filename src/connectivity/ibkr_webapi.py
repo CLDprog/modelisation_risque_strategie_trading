@@ -22,6 +22,7 @@ import json
 import threading
 import time
 import urllib3
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -796,6 +797,74 @@ class IBKRWebAdapter(BrokerAdapter):
             unrealized_pnl=to_float(row.get("unrealizedPnl")),
             contract_id_broker=int(row["conid"]) if row.get("conid") else None,
         )
+
+    # ------------------------------------------------------------------
+    # Passage d'ordres (compte paper) — utilisé UNIQUEMENT par le collecteur
+    # ------------------------------------------------------------------
+
+    def resolve_front_future(self, symbol: str) -> Optional[int]:
+        """Conid du future indice le plus proche (front month), ex. ESTX50 → FESX."""
+        if self._client is None:
+            return None
+        try:
+            res = self._client.security_future_by_symbol(symbol)
+            futs = (res.data or {}).get(symbol, []) if isinstance(res.data, dict) else []
+            today = date.today().strftime("%Y%m%d")
+            valid = [f for f in futs if str(f.get("expirationDate") or "") >= today]
+            valid.sort(key=lambda f: str(f.get("expirationDate")))
+            return int(valid[0]["conid"]) if valid else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"resolve_front_future({symbol}): {exc}")
+            return None
+
+    def place_order(self, conid: int, side: str, quantity: float,
+                    order_type: str = "MKT", price: Optional[float] = None,
+                    sec_type: Optional[str] = None, tif: str = "DAY") -> dict:
+        """Place un ordre et auto-confirme les avertissements standards (paper).
+        Retourne {ok, order_id, status, message}."""
+        from ibind.client.ibkr_utils import OrderRequest, QuestionType
+        if self._client is None:
+            return {"ok": False, "message": "client non connecté"}
+        coid = uuid.uuid4().hex[:18]
+        req = OrderRequest(
+            conid=int(conid), side=side.upper(), quantity=float(quantity),
+            order_type=order_type.upper(), acct_id=self.account_id,
+            price=price, tif=tif, coid=coid,
+            sec_type=sec_type,
+        )
+        answers = {q: True for q in QuestionType}      # confirme les pop-ups standards
+        try:
+            res = self._client.place_order(req, answers, self.account_id)
+            rows = res.data if isinstance(res.data, list) else [res.data]
+            first = rows[0] if rows else {}
+            oid = first.get("order_id") or first.get("orderId") or coid
+            return {"ok": True, "order_id": str(oid),
+                    "status": first.get("order_status") or "submitted",
+                    "message": first.get("text") or "soumis"}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"place_order(conid={conid}): {exc}")
+            return {"ok": False, "message": str(exc)[:200]}
+
+    def live_orders(self) -> List[dict]:
+        if self._client is None:
+            return []
+        try:
+            res = self._client.live_orders()
+            data = res.data or {}
+            return data.get("orders", data) if isinstance(data, dict) else (data or [])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"live_orders(): {exc}")
+            return []
+
+    def cancel_order(self, order_id: str) -> dict:
+        if self._client is None:
+            return {"ok": False, "message": "client non connecté"}
+        try:
+            res = self._client.cancel_order(str(order_id), self.account_id)
+            return {"ok": True, "message": str(res.data)[:200]}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"cancel_order({order_id}): {exc}")
+            return {"ok": False, "message": str(exc)[:200]}
 
     # ------------------------------------------------------------------
     # Internal state helpers
