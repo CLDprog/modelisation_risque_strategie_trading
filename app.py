@@ -6,8 +6,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc, callback, Input, Output, State
+import plotly.io as pio
 
 from src.utils.config import load_config
+
+# Format des nombres EN FRANÇAIS sur TOUS les graphes Plotly (réglage global, une
+# fois) : séparateurs = "décimale puis milliers" → ", " = virgule décimale + espace
+# pour les milliers (48 088 et non 48,088). Les tableaux (dash_table) sont gérés
+# séparément via la locale fr de chaque colonne (cf. pages).
+for _tpl in ("plotly_white", "plotly"):
+    try:
+        pio.templates[_tpl].layout.separators = ", "
+    except Exception:
+        pass
 
 # Symboles disponibles — définis dans configs/universe.yaml uniquement
 _universe_cfg    = load_config("universe")

@@ -28,10 +28,27 @@ layout = dbc.Container([
                 r"$$\delta P \approx \Delta \cdot \delta S + \frac{1}{2}\Gamma \cdot \delta S^2 + \nu \cdot \delta\sigma + \Theta \cdot \delta t$$",
                 mathjax=True), className="formula-box"),
             dbc.Alert(
-                "Source de vérité = repricing complet (Black-Scholes sous paramètres choqués). "
+                "Repricing complet (Black-Scholes sous paramètres choqués). "
                 "L'approximation Greeks est utilisée pour la surveillance intraday rapide uniquement.",
                 color="dark", className="mt-3 mb-0 border border-secondary",
             ),
+        ]),
+    ], className="card mb-4"),
+
+    # ── Vue BOOK (positions réelles, hedge inclus) — pertinente pour la stratégie ──
+    dbc.Card([
+        dbc.CardHeader("Scénarios au niveau BOOK — positions réelles, delta-hedge inclus"),
+        dbc.CardBody([
+            dbc.Row(id="scen-book-metrics", className="g-3 mb-3"),
+            dcc.Graph(id="scen-book-bar", config={"displayModeBar": False}),
+            html.Small(
+                "Repricing du book entier (tous les straddles, agrégés) sous chaque choc, "
+                "via Eq.19. « Sans hedge » = options seules. « Delta-neutre » = book ramené "
+                "à Δ≈0 par le future indice (ce que la stratégie maintient chaque jour). "
+                "L'écart sur les chocs de SPOT montre l'effet du hedge : il annule le "
+                "directionnel et ne laisse que le gamma. Sur vol/temps, le hedge n'a aucun "
+                "effet (le future n'a ni vega ni theta) — c'est là qu'est ton vrai pari.",
+                className="text-muted d-block mt-2"),
         ]),
     ], className="card mb-4"),
 
@@ -39,7 +56,7 @@ layout = dbc.Container([
 
     dbc.Row([
         dbc.Col(dbc.Card([
-            dbc.CardHeader("PnL total par scénario"),
+            dbc.CardHeader("PnL total par scénario (sous-jacent sélectionné)"),
             dbc.CardBody(dcc.Graph(id="scen-bar", config={"displayModeBar": False})),
         ], className="card"), width=6),
         dbc.Col(dbc.Card([
@@ -72,6 +89,75 @@ layout = dbc.Container([
         )),
     ], className="card"),
 ], fluid=True)
+
+
+def _bmb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
+    return dbc.Col(html.Div([
+        html.Div(str(value), className="metric-value", style={"fontSize": "1.0rem"}),
+        html.Div(label,      className="metric-label"),
+    ], className=f"metric-box {css}"), width=3)
+
+
+@callback(
+    Output("scen-book-metrics", "children"),
+    Output("scen-book-bar",     "figure"),
+    Input("scen-interval",      "n_intervals"),
+)
+def refresh_book_scenarios(_):
+    """Scénarios agrégés sur le book réel (blotter), avec/sans delta-hedge.
+    Eq.19 : δP = Δ€·s + ½Γ€·s² + ν€·(Δσ en pts) + Θ€·Δt. Le hedge delta-neutre
+    retire le terme directionnel (Δ€·s), laissant le gamma/vega/theta."""
+    from pages.trading import _enrich_positions
+    from src.utils.config import load_config
+    fig = go.Figure()
+    blotter = datasource.get_blotter()
+    positions = blotter.get("positions", [])
+    idx = datasource.get_spot("ESTX50")
+    if not positions or not idx:
+        return ([dbc.Col(dbc.Alert("Aucune position dans le book — passe tes straddles "
+                                   "d'abord (page Trading).", color="info"), width=12)], fig)
+    enr = _enrich_positions(positions, idx)
+    opts = [r for r in enr if r.get("right") in ("C", "P")]
+    opt_net_delta = sum(r.get("pos_eur_delta") or 0 for r in opts)
+
+    def leg(r, s, dvol_pts, days):
+        return ((r.get("pos_eur_delta") or 0) * s
+                + 0.5 * (r.get("pos_eur_gamma") or 0) * s * s
+                + (r.get("pos_eur_vega") or 0) * dvol_pts
+                + (r.get("pos_eur_theta") or 0) * days)
+
+    names, no_h, hedged = [], [], []
+    for sc in load_config("scenarios").get("scenarios", []):
+        s = float(sc.get("spot_shift_pct") or 0)
+        dvol_pts = float(sc.get("vol_shift_abs") or 0) * 100      # 0.10 → 10 pts de vol
+        days = float(sc.get("time_roll_days") or 0)
+        opt_pnl = sum(leg(r, s, dvol_pts, days) for r in opts)
+        names.append(sc.get("description") or sc.get("scenario_id"))
+        no_h.append(opt_pnl)
+        hedged.append(opt_pnl - opt_net_delta * s)                # delta neutralisé
+
+    fig.add_trace(go.Bar(x=names, y=no_h, name="Sans hedge (options seules)",
+                         marker_color="#bc4c00"))
+    fig.add_trace(go.Bar(x=names, y=hedged, name="Delta-neutre (book hedgé)",
+                         marker_color="#0969da"))
+    fig.update_layout(barmode="group", height=340, template="plotly_white",
+                      paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                      margin=dict(l=50, r=15, t=10, b=90), font=dict(size=10),
+                      yaxis_title="P&L book (€)", xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                      legend=dict(orientation="h", y=1.12, font=dict(size=10)))
+    worst = min(hedged) if hedged else 0
+    best = max(hedged) if hedged else 0
+    iw = hedged.index(worst) if hedged else 0
+    ib = hedged.index(best) if hedged else 0
+    metrics = [
+        _bmb(f"{worst:+,.0f} €", f"Pire (hedgé) : {names[iw]}" if hedged else "—", "negative"),
+        _bmb(f"{best:+,.0f} €", f"Meilleur (hedgé) : {names[ib]}" if hedged else "—", "positive"),
+        _bmb(f"{len(opts)} jambes", "Options dans le book", "info"),
+        _bmb(f"{opt_net_delta:+,.0f} €", "Δ€ net options (avant hedge)", "warning"),
+    ]
+    return metrics, fig
 
 
 @callback(
@@ -159,6 +245,8 @@ def refresh_scenarios(_, symbol):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value"),
         html.Div(label,      className="metric-label"),

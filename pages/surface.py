@@ -18,16 +18,16 @@ dash.register_page(__name__, path="/surface", name="Surface de Vol")
 
 _PARAM_COLUMNS = [
     {"name": "Expiry",      "id": "expiry"},
-    {"name": "T (années)",  "id": "maturity_years", "type": "numeric", "format": {"specifier": ".3f"}},
+    {"name": "T (années)",  "id": "maturity_years", "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".3f"}},
     {"name": "Modèle",      "id": "model"},
     {"name": "Points",      "id": "n_points"},
-    {"name": "RMSE",        "id": "fit_rmse",  "type": "numeric", "format": {"specifier": ".5f"}},
+    {"name": "RMSE",        "id": "fit_rmse",  "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".5f"}},
     {"name": "Qualité",     "id": "quality_flag"},
-    {"name": "a",           "id": "svi_a",     "type": "numeric", "format": {"specifier": ".5f"}},
-    {"name": "b",           "id": "svi_b",     "type": "numeric", "format": {"specifier": ".5f"}},
-    {"name": "ρ",           "id": "svi_rho",   "type": "numeric", "format": {"specifier": ".4f"}},
-    {"name": "m",           "id": "svi_m",     "type": "numeric", "format": {"specifier": ".4f"}},
-    {"name": "σ",           "id": "svi_sigma", "type": "numeric", "format": {"specifier": ".4f"}},
+    {"name": "a",           "id": "svi_a",     "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".5f"}},
+    {"name": "b",           "id": "svi_b",     "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".5f"}},
+    {"name": "ρ",           "id": "svi_rho",   "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".4f"}},
+    {"name": "m",           "id": "svi_m",     "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".4f"}},
+    {"name": "σ",           "id": "svi_sigma", "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".4f"}},
 ]
 
 layout = dbc.Container([
@@ -280,6 +280,8 @@ def refresh_surface(_, symbol):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value"),
         html.Div(label,      className="metric-label"),

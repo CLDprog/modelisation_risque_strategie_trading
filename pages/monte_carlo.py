@@ -111,15 +111,15 @@ layout = dbc.Container([
                     id="mc-ladder-table",
                     columns=[
                         {"name": "Strike", "id": "strike", "type": "numeric",
-                         "format": {"specifier": ",.0f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
                         {"name": "Asiatique MC", "id": "asian_mc", "type": "numeric",
-                         "format": {"specifier": ",.2f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.2f"}},
                         {"name": "± IC95", "id": "ci", "type": "numeric",
-                         "format": {"specifier": ".2f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}},
                         {"name": "Géom. exacte", "id": "geo_cf", "type": "numeric",
-                         "format": {"specifier": ",.2f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.2f"}},
                         {"name": "Euro. Black", "id": "european_bs", "type": "numeric",
-                         "format": {"specifier": ",.2f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.2f"}},
                     ],
                     style_header={"textTransform": "none"},
                     style_table={"overflowX": "auto"},
@@ -433,6 +433,8 @@ def run_hedge(_clicks, symbol, tc_bps, dvol, months, strike_pct, right):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value", style={"fontSize": "0.95rem"}),
         html.Div(label,      className="metric-label"),

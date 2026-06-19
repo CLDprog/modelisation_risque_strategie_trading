@@ -547,13 +547,19 @@ class Collector:
                 else:
                     u = next((x for x in self.universe_cfg.get("underlyings", [])
                               if x.get("symbol") == t["underlying"]), {})
+                    # Bourse d'options : MÊME logique que la collecte (live.py) —
+                    # option_exchange par sous-jacent SINON le défaut options.exchange
+                    # (EUREX). Sans ça, exchange=None → secdef vide → conid introuvable
+                    # (constaté 2026-06-17 : 10/10 ordres rejetés).
+                    opt_exch = (u.get("option_exchange")
+                                or self.universe_cfg.get("options", {}).get("exchange"))
                     und = self.adapter.resolve_underlying(
-                        u.get("ibkr_symbol", t["underlying"]),
+                        u.get("ibkr_symbol") or t["underlying"],
                         u.get("exchange", "SMART"), u.get("currency", "EUR"),
                         u.get("sec_type", "STK"))
                     conid = self.adapter.resolve_option(
                         und, _date.fromisoformat(t["expiry"]), float(t["strike"]),
-                        instr, u.get("option_exchange")) if und else None
+                        instr, opt_exch) if und else None
                     sec = "OPT"
                 if not conid:
                     ob.update_ticket(tid, "rejected", message="conid introuvable")
@@ -575,11 +581,23 @@ class Collector:
                 ob.update_ticket(tid, "error", message=str(exc)[:200])
                 logger.warning(f"  ticket {tid} : {exc}")
 
-        # Publie le blotter (best-effort) pour la page Trading
+        # Publie le blotter (best-effort) pour la page Trading.
         try:
             orders = self.adapter.live_orders()
             from dataclasses import asdict
             positions = [asdict(p) for p in self.adapter.positions()]
+            # IBKR renvoie PARFOIS des positions "nues" (conid présent mais sans
+            # sous-jacent/strike/right, le temps que les détails de contrat se
+            # chargent côté serveur). Ne pas écraser un bon blotter avec ce snapshot
+            # dégradé → sinon tout le suivi des straddles disparaît à l'écran.
+            bare = sum(1 for p in positions if p.get("contract_id_broker")
+                       and not (p.get("underlying_symbol") or "").strip())
+            if positions and bare >= max(1, len(positions) // 2):
+                prev = ob.read_blotter().get("positions", [])
+                if prev:
+                    positions = prev          # garde le dernier instantané valide
+                    logger.info(f"  blotter : snapshot positions dégradé ({bare} nues) "
+                                f"— dernier valide conservé")
             ob.write_blotter(orders, positions)
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"blotter: {exc}")

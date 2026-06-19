@@ -92,15 +92,15 @@ layout = dbc.Container([
             columns=[
                 {"name": "Composante", "id": "symbol"},
                 {"name": "σ ATM (%)",  "id": "iv", "type": "numeric",
-                 "format": {"specifier": ".1f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".1f"}},
                 {"name": "Poids w",    "id": "weight", "type": "numeric",
-                 "format": {"specifier": ".3f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".3f"}},
                 {"name": "Vega cible (€/pt)", "id": "vega_target", "type": "numeric",
-                 "format": {"specifier": ",.0f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
                 {"name": "Vega ATM €/contrat", "id": "vega_per_contract", "type": "numeric",
-                 "format": {"specifier": ",.1f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.1f"}},
                 {"name": "≈ Contrats", "id": "contracts", "type": "numeric",
-                 "format": {"specifier": ",.1f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.1f"}},
             ],
             style_header={"textTransform": "none"},
             style_table={"overflowX": "auto"},
@@ -315,6 +315,8 @@ def refresh_trade(tenor, vega_notional):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value", style={"fontSize": "1.0rem"}),
         html.Div(label,      className="metric-label"),

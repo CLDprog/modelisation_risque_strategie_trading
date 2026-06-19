@@ -14,27 +14,27 @@ from src.data import no_data_alert
 
 dash.register_page(__name__, path="/greeks", name="Greeks & Risk")
 
-_FMT2 = {"specifier": ".2f"}
-_FMT4 = {"specifier": ".4f"}
+_FMT2 = {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}
+_FMT4 = {"locale": {"group": " ", "decimal": ","}, "specifier": ".4f"}
 
 _GRID_COLUMNS = [
     {"name": ["", "Expiry"],          "id": "expiry"},
     {"name": ["", "Strike"],          "id": "strike",   "type": "numeric", "format": _FMT2},
     {"name": ["", "C/P"],             "id": "right"},
     {"name": ["Cotation", "Bid sz"],  "id": "bid_size", "type": "numeric",
-     "format": {"specifier": ",.0f"}},
+     "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
     {"name": ["Cotation", "Bid"],     "id": "bid",      "type": "numeric", "format": _FMT4},
     {"name": ["Cotation", "Mid"],     "id": "mid_price","type": "numeric", "format": _FMT4},
     {"name": ["Cotation", "Ask"],     "id": "ask",      "type": "numeric", "format": _FMT4},
     {"name": ["Cotation", "Ask sz"],  "id": "ask_size", "type": "numeric",
-     "format": {"specifier": ",.0f"}},
+     "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
     {"name": ["Volumétrie", "Volume"],"id": "volume",   "type": "numeric",
-     "format": {"specifier": ",.0f"}},
+     "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
     {"name": ["Volumétrie", "OI"],    "id": "open_interest", "type": "numeric",
-     "format": {"specifier": ",.0f"}},
+     "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
     {"name": ["", "IV σ"],            "id": "implied_vol", "type": "numeric", "format": _FMT4},
     {"name": ["Greeks bruts", "Δ"],   "id": "delta",    "type": "numeric", "format": _FMT4},
-    {"name": ["Greeks bruts", "Γ"],   "id": "gamma",    "type": "numeric", "format": {"specifier": ".5f"}},
+    {"name": ["Greeks bruts", "Γ"],   "id": "gamma",    "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".5f"}},
     {"name": ["Greeks bruts", "ν"],   "id": "vega",     "type": "numeric", "format": _FMT4},
     {"name": ["Greeks bruts", "Θ"],   "id": "theta",    "type": "numeric", "format": _FMT4},
     {"name": ["Greeks bruts", "ρ"],   "id": "rho",      "type": "numeric", "format": _FMT4},
@@ -531,6 +531,8 @@ def refresh_portfolio(_, symbol):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value"),
         html.Div(label,      className="metric-label"),

@@ -343,6 +343,8 @@ def ci_view(sharpe, days, conf):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value", style={"fontSize": "1.0rem"}),
         html.Div(label,      className="metric-label"),

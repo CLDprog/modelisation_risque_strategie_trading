@@ -136,6 +136,8 @@ def refresh_universe(_, symbol):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value"),
         html.Div(label,      className="metric-label"),

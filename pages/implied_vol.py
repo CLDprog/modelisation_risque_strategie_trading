@@ -268,7 +268,12 @@ def refresh_iv_charts(symbol, _):
             marker=dict(size=4),
         ))
     fig_ov.add_vline(x=0, line_dash="dot", line_color="#57606a")
-    fig_ov.update_layout(height=330, margin=dict(l=45, r=10, t=8, b=40),
+    fig_ov.add_annotation(
+        xref="paper", yref="paper", x=0.0, y=1.13, xanchor="left", yanchor="bottom",
+        showarrow=False, align="left", font=dict(size=9.5, color="#57606a"),
+        text="Construction : chaque point = la vol implicite de l'option OTM à ce "
+             "strike — put à gauche de l'ATM, call à droite, l'ATM (k≈0) au centre.")
+    fig_ov.update_layout(height=330, margin=dict(l=45, r=10, t=44, b=40),
                          xaxis_title="Log-moneyness k = ln(K/F)", yaxis_title="IV (%)",
                          legend=dict(font=dict(size=9)), **_BASE_LAYOUT)
 
@@ -354,6 +359,8 @@ def refresh_iv_diagnostics(symbol, _):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value"),
         html.Div(label,      className="metric-label"),

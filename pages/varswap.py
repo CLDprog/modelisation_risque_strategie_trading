@@ -88,16 +88,16 @@ layout = dbc.Container([
                     id="vs-exec-table",
                     columns=[
                         {"name": "Strike", "id": "strike", "type": "numeric",
-                         "format": {"specifier": ",.0f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.0f"}},
                         {"name": "OTM", "id": "right"},
                         {"name": "Bid", "id": "bid", "type": "numeric",
-                         "format": {"specifier": ".2f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}},
                         {"name": "Ask", "id": "ask", "type": "numeric",
-                         "format": {"specifier": ".2f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}},
                         {"name": "Poids ΔK/K²", "id": "weight", "type": "numeric",
-                         "format": {"specifier": ".3g"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".3g"}},
                         {"name": "Contrib. (bp var)", "id": "contrib", "type": "numeric",
-                         "format": {"specifier": ".1f"}},
+                         "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".1f"}},
                     ],
                     style_header={"textTransform": "none"},
                     style_table={"overflowX": "auto"},
@@ -119,15 +119,15 @@ layout = dbc.Container([
             columns=[
                 {"name": "Expiry",        "id": "expiry"},
                 {"name": "T (années)",    "id": "maturity_years", "type": "numeric",
-                 "format": {"specifier": ".3f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".3f"}},
                 {"name": "Forward",       "id": "forward", "type": "numeric",
-                 "format": {"specifier": ",.1f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ",.1f"}},
                 {"name": "K_var (vol %)", "id": "vol_strike", "type": "numeric",
-                 "format": {"specifier": ".2f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}},
                 {"name": "σ ATM (%)",     "id": "atm_vol", "type": "numeric",
-                 "format": {"specifier": ".2f"}},
+                 "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}},
                 {"name": "Prime convexité (pts)", "id": "convexity_premium",
-                 "type": "numeric", "format": {"specifier": ".2f"}},
+                 "type": "numeric", "format": {"locale": {"group": " ", "decimal": ","}, "specifier": ".2f"}},
                 {"name": "Strikes du strip", "id": "n_strikes"},
             ],
             style_header={"textTransform": "none"},
@@ -318,6 +318,8 @@ def show_gap(official, symbol):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value", style={"fontSize": "1.0rem"}),
         html.Div(label,      className="metric-label"),

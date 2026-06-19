@@ -23,7 +23,7 @@ import threading
 import time
 import urllib3
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -809,8 +809,12 @@ class IBKRWebAdapter(BrokerAdapter):
         try:
             res = self._client.security_future_by_symbol(symbol)
             futs = (res.data or {}).get(symbol, []) if isinstance(res.data, dict) else []
-            today = date.today().strftime("%Y%m%d")
-            valid = [f for f in futs if str(f.get("expirationDate") or "") >= today]
+            # On SAUTE les contrats à < 5 jours de l'expiration (fenêtre de roll) : à
+            # l'approche de l'échéance la liquidité a migré vers le trimestre suivant.
+            # Sinon, le 17/06, on prendrait le FESX juin qui expire le 19 (2 jours) →
+            # roll forcé immédiat. Avec ce filtre, on prend septembre.
+            cutoff = (date.today() + timedelta(days=5)).strftime("%Y%m%d")
+            valid = [f for f in futs if str(f.get("expirationDate") or "") >= cutoff]
             valid.sort(key=lambda f: str(f.get("expirationDate")))
             return int(valid[0]["conid"]) if valid else None
         except Exception as exc:  # noqa: BLE001

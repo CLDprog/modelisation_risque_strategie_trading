@@ -212,6 +212,8 @@ def update_pricing(spot, strike, vol_pct, days, rate_pct, right, symbol):
 
 
 def _mb(value, label, css=""):
+    from src.utils.fmt import fr_num
+    value = fr_num(value)
     return html.Div([
         html.Div(str(value), className="metric-value"),
         html.Div(label,      className="metric-label"),
